@@ -1,8 +1,11 @@
 .DS_Store
 node_modules
 .next
+.open-next
 out
 dist
+.wrangler
+cloudflare-env.d.ts
 coverage
 .env
 .env.local

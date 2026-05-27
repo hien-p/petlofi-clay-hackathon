@@ -7,7 +7,10 @@
     "dev": "next dev --port 3000",
     "build": "next build",
     "lint": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
   },
   "dependencies": {
     "@mysten/dapp-kit": "latest",
@@ -24,9 +27,11 @@
     "zod": "latest"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "^1.19.11",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
-    "vitest": "latest"
+    "vitest": "latest",
+    "wrangler": "^4.95.0"
   }
 }
