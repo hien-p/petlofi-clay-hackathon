@@ -1,0 +1,19 @@
+{
+  "id": "lofi-yeti",
+  "displayName": "CLAY Lofi Yeti",
+  "description": "A mintable full-body Lofi Yeti companion animated from a hatch-pet reference sheet for Sui agent work.",
+  "spritesheetPath": "spritesheet.webp",
+  "referenceUrl": "https://hackathon.lofitheyeti.com/",
+  "hatchRun": "lofi-yeti-v3",
+  "states": [
+    "idle",
+    "running-right",
+    "running-left",
+    "waving",
+    "jumping",
+    "failed",
+    "waiting",
+    "running",
+    "review"
+  ]
+}

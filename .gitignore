@@ -1,0 +1,15 @@
+.DS_Store
+node_modules
+.next
+out
+dist
+coverage
+.env
+.env.local
+.petlofi
+.petlofi-hatch
+contracts/**/build
+contracts/**/traces
+contracts/**/*.trace
+contracts/**/*.coverage*
+contracts/**/Pub.*.toml

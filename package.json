@@ -1,0 +1,22 @@
+{
+  "name": "petlofi",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Sui-owned Lofi AI companion pets with Walrus proofs and MemWal memory.",
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "dev": "pnpm --filter @petlofi/web dev",
+    "build": "pnpm --filter @petlofi/agent build && pnpm --filter @petlofi/web build",
+    "lint": "pnpm --filter @petlofi/web lint",
+    "test": "pnpm --filter @petlofi/agent test && pnpm --filter @petlofi/web test",
+    "move:build": "sui move build --path contracts/petlofi",
+    "move:test": "sui move test --path contracts/petlofi",
+    "verify": "pnpm test && pnpm build && pnpm move:test",
+    "make:sample-pet": "node scripts/make_sample_pet.mjs",
+    "lofi:hatch-input": "node scripts/export_lofi_hatch_input.mjs"
+  },
+  "devDependencies": {
+    "sharp": "latest",
+    "typescript": "5.9.3"
+  }
+}

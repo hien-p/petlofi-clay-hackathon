@@ -1,0 +1,2670 @@
+"use client";
+
+import { ConnectButton, useCurrentAccount, useSuiClient } from "@mysten/dapp-kit";
+import {
+  AlertTriangle,
+  Archive,
+  ArrowLeft,
+  ArrowRight,
+  Brain,
+  Coins,
+  Download,
+  Link as LinkIcon,
+  Navigation,
+  Sparkles,
+  Upload,
+  X
+} from "lucide-react";
+import Link from "next/link";
+import type { FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { AgentRunResult, PetGameState } from "@petlofi/agent";
+import {
+  ARENA_CUDDLE_COOLDOWN_MS,
+  ARENA_RUN_SECONDS,
+  arenaOutcomeAction,
+  createIdleArenaSnapshot,
+  type ArenaProofReceipt,
+  type ArenaRunPhase,
+  type ArenaRunSnapshot,
+  type ArenaRunSummary
+} from "@/lib/arena";
+import {
+  ANIMATION_MEANINGS,
+  canEvolvePet,
+  evolvePet,
+  failedLocalRun,
+  feedPet,
+  nextEvolutionRequiredLevel,
+  restPet,
+  type AnimationMeaning
+} from "@/lib/gameActions";
+import { isOnChainConfigured } from "@/lib/config";
+import {
+  isRealGeneratedPack,
+  type LofiGeneratedPetPack,
+  type LofiGeneratedResponse,
+  type LofiGenerationRequestMode
+} from "@/lib/lofiGenerated";
+import {
+  DEFAULT_ANIMATION_MINT_FEE_SUI,
+  LOFI_TRADEPORT_URL,
+  buildUniqueLofiAnimationVariants,
+  shortObjectId,
+  type LofiAnimationVariant,
+  type TradeportLofiItem,
+  type TradeportLofiTopResponse
+} from "@/lib/lofiMarket";
+import type { PetState } from "@/lib/petPack";
+import {
+  buildNameQuests,
+  identityDisplayName,
+  normalizeSuiName,
+  shortAddress,
+  type SuiIdentity
+} from "@/lib/suins";
+import { PetSprite } from "./PetSprite";
+import { GameCanvas } from "./game/GameCanvas";
+import type { GameCommand, GameFriend, GameHotspotId, GamePetAtlas, GamePetVariant, GameSceneId } from "./game/types";
+
+type ProofEntry = {
+  label: string;
+  value: string;
+};
+
+type TimelineEntry = {
+  petState: PetState;
+  label: string;
+  detail: string;
+};
+
+type MessengerEntry = {
+  speaker: string;
+  message: string;
+};
+
+type OwnedLofiNft = {
+  objectId: string;
+  type: string;
+  name: string;
+  description: string;
+  imageUrl: string;
+  source: "wallet" | "demo";
+};
+
+type HeldDirection = "up" | "down" | "left" | "right";
+
+type VillageZoneId = GameHotspotId;
+
+type VillageZone = {
+  id: VillageZoneId;
+  title: string;
+  label: string;
+  detail: string;
+  action: string;
+  kind: "name" | "forge" | "vault" | "library" | "rest" | "feed" | "gallery";
+  size: "small" | "medium" | "large";
+  x: number;
+  y: number;
+};
+
+type AgentRunResponse = {
+  result: AgentRunResult;
+  gameState: PetGameState;
+  walrus: {
+    blobId: string;
+    network: string;
+    proofUrl: string;
+    digest: string;
+    storage: "walrus" | "local";
+  };
+};
+
+type PetPackUploadResponse = {
+  blobId: string;
+  proofUrl: string;
+  storage: "walrus" | "local";
+  pet: {
+    id: string;
+    displayName: string;
+  };
+};
+
+type MemorySaveResponse = {
+  record: {
+    id: string;
+    createdAt: string;
+  };
+  walrus: {
+    blobId: string;
+    storage: string;
+  };
+};
+
+type ArenaProofResponse = {
+  blobId: string;
+  network: string;
+  proofUrl: string;
+  digest: string;
+  storage: "walrus" | "local";
+};
+
+type LocalGameAction = "feed" | "rest" | "move-left" | "move-right" | "blocked" | "evolve" | "equip-suins";
+type WorldMode = GameSceneId;
+type SuiObjectScanner = {
+  getOwnedObjects: (input: {
+    owner: string;
+    cursor?: string | null;
+    limit: number;
+    options: {
+      showContent: boolean;
+      showDisplay: boolean;
+      showType: boolean;
+    };
+  }) => Promise<{
+    data: unknown[];
+    hasNextPage: boolean;
+    nextCursor?: string | null;
+  }>;
+};
+
+const DEFAULT_GAME_STATE: PetGameState = {
+  level: 1,
+  xp: 0,
+  mood: 82,
+  energy: 76,
+  streak: 0,
+  evolutionStage: 0
+};
+
+const starterTimeline: TimelineEntry[] = [
+  { petState: "idle", label: "Template ready", detail: "CLAY Lofi Yeti is home, owned by nobody yet, and ready to be minted." }
+];
+
+const AGENT_STAGE_LABELS: Record<string, string> = {
+  coding: "Agent working",
+  reviewing: "Memory review",
+  completed: "Proof complete"
+};
+
+const LOCAL_IDENTITY: SuiIdentity = {
+  status: "local",
+  address: "local-demo-owner",
+  displayName: "@clay-builder",
+  suinsName: null,
+  balanceMist: null,
+  ownedObjectCount: null
+};
+
+const STARTER_MESSAGES: MessengerEntry[] = [
+  { speaker: "PetLofi", message: "SuiNS Companion Mode ready. Your name becomes the builder identity; the pet carries the receipts." },
+  { speaker: "CLAY Lofi Yeti", message: "Mint me, equip me to your SuiNS identity, then run work so I can grow." }
+];
+
+const STARTER_FRIENDS: GameFriend[] = [
+  { id: "clay-runner", name: "@clay-runner", role: "proof", zoneId: "agent-forge", color: "#f4c95d", petState: "running" },
+  { id: "walrus-keeper", name: "@walrus-keeper", role: "vault", zoneId: "walrus-vault", color: "#4edbd2", petState: "review" },
+  { id: "memwal-sage", name: "@memwal-sage", role: "recall", zoneId: "memwal-library", color: "#a99cff", petState: "review" },
+  { id: "sui-forger", name: "@sui-forger", role: "agent", zoneId: "suins-gate", color: "#93f5c8", petState: "waving" }
+];
+
+const FRIEND_POOL: GameFriend[] = [
+  { id: "lofi-builder", name: "@lofi-builder", role: "new plot", zoneId: "feed-stall", color: "#ff6b8d", petState: "waving" },
+  { id: "deepbook-pal", name: "@deepbook-pal", role: "market", zoneId: "agent-forge", color: "#f4c95d", petState: "running-right" },
+  { id: "suins-mapper", name: "@suins-mapper", role: "name", zoneId: "suins-gate", color: "#4edbd2", petState: "idle" },
+  { id: "walrus-friend", name: "@walrus-friend", role: "blob", zoneId: "walrus-vault", color: "#a99cff", petState: "jumping" },
+  { id: "memwal-pal", name: "@memwal-pal", role: "memory", zoneId: "memwal-library", color: "#93f5c8", petState: "review" }
+];
+
+const DEMO_LOFI_NFTS: OwnedLofiNft[] = [
+  {
+    objectId: "template:clay-lofi-yeti",
+    type: "demo::lofi::CLAYYeti",
+    name: "CLAY Lofi Yeti",
+    description: "Default animated PetLofi companion rig for local proof mode.",
+    imageUrl: "/pets/lofi-yeti/source-logo.png",
+    source: "demo"
+  },
+  {
+    objectId: "template:walrus-lofi-yeti",
+    type: "demo::lofi::WalrusYeti",
+    name: "Walrus Vault Yeti",
+    description: "Demo Lofi skin placeholder. Real wallet NFTs appear here after connect.",
+    imageUrl: "/pets/lofi-yeti/source-logo.png",
+    source: "demo"
+  },
+  {
+    objectId: "template:memwal-lofi-yeti",
+    type: "demo::lofi::MemWalYeti",
+    name: "MemWal Recall Yeti",
+    description: "Demo Lofi skin placeholder for memory-focused companions.",
+    imageUrl: "/pets/lofi-yeti/source-logo.png",
+    source: "demo"
+  }
+];
+
+const LOFI_NFT_KEYWORDS = ["lofi", "yeti", "clay"];
+const LOFI_NFT_TYPE_FILTERS = (process.env.NEXT_PUBLIC_LOFI_NFT_TYPE_FILTERS ?? "")
+  .split(",")
+  .map((filter) => filter.trim().toLowerCase())
+  .filter(Boolean);
+const OWNED_OBJECT_PAGE_LIMIT = 50;
+const OWNED_OBJECT_MAX_PAGES = 8;
+
+const VILLAGE_ZONES: VillageZone[] = [
+  {
+    id: "suins-gate",
+    title: "SuiNS Gate",
+    label: "Name",
+    detail: "Resolve identity, mint the pet, equip companion, or try evolve.",
+    action: "Mint / Equip / Evolve",
+    kind: "name",
+    size: "large",
+    x: 30,
+    y: 45
+  },
+  {
+    id: "agent-forge",
+    title: "Agent Forge",
+    label: "Work",
+    detail: "Run the AI agent and earn proof-of-work progress.",
+    action: "Run agent",
+    kind: "forge",
+    size: "large",
+    x: 66,
+    y: 40
+  },
+  {
+    id: "walrus-vault",
+    title: "Walrus Vault",
+    label: "Proof",
+    detail: "Sync the latest proof or memory blob into the passport.",
+    action: "Sync proof",
+    kind: "vault",
+    size: "medium",
+    x: 71,
+    y: 74
+  },
+  {
+    id: "memwal-library",
+    title: "MemWal Library",
+    label: "Memory",
+    detail: "Save the latest useful work summary as pet memory.",
+    action: "Save memory",
+    kind: "library",
+    size: "medium",
+    x: 34,
+    y: 94
+  },
+  {
+    id: "rest-hut",
+    title: "Rest Hut",
+    label: "Rest",
+    detail: "Restore energy and return to the idle home state.",
+    action: "Rest",
+    kind: "rest",
+    size: "small",
+    x: 22,
+    y: 78
+  },
+  {
+    id: "feed-stall",
+    title: "Treat Stall",
+    label: "Feed",
+    detail: "Feed the pet to improve mood and readiness.",
+    action: "Feed",
+    kind: "feed",
+    size: "small",
+    x: 51,
+    y: 58
+  },
+  {
+    id: "petdex",
+    title: "Petdex Gallery",
+    label: "Gallery",
+    detail: "Inspect owned pet, templates, and Codex pack.",
+    action: "Open Petdex",
+    kind: "gallery",
+    size: "medium",
+    x: 76,
+    y: 94
+  }
+];
+
+export function PetRoom() {
+  const account = useCurrentAccount();
+  const suiClient = useSuiClient();
+  const heldDirectionsRef = useRef<Set<HeldDirection>>(new Set());
+  const dpadPressStartedAtRef = useRef<Record<HeldDirection, number>>({
+    up: 0,
+    down: 0,
+    left: 0,
+    right: 0
+  });
+  const [petState, setPetState] = useState<PetState>("idle");
+  const [gameState, setGameState] = useState<PetGameState>(DEFAULT_GAME_STATE);
+  const [prompt, setPrompt] = useState("Review the PetLofi CLAY demo and produce the next concrete shipping step.");
+  const [petId, setPetId] = useState("template:lofi-yeti");
+  const [petName, setPetName] = useState("CLAY Lofi Yeti");
+  const [isMinted, setIsMinted] = useState(false);
+  const [isMinting, setIsMinting] = useState(false);
+  const [agentResult, setAgentResult] = useState<AgentRunResult | null>(null);
+  const [timeline, setTimeline] = useState<TimelineEntry[]>(starterTimeline);
+  const [activeStage, setActiveStage] = useState(0);
+  const [isRunning, setIsRunning] = useState(false);
+  const [proofs, setProofs] = useState<ProofEntry[]>([
+    { label: "Owner update rule", value: "Only the owner can update this pet" },
+    { label: "Lofi pet art", value: "CLAY Lofi Yeti hatch-pet 8x9 reference-style atlas" },
+    { label: "Reference", value: "https://hackathon.lofitheyeti.com/" },
+    { label: "Sui mode", value: isOnChainConfigured() ? "Package configured" : "Local proof mode until package publish" },
+    { label: "Identity mode", value: "SuiNS Companion Mode" },
+    { label: "Latest animation state", value: "idle" }
+  ]);
+  const [mintMessage, setMintMessage] = useState("");
+  const [uploadMessage, setUploadMessage] = useState("");
+  const [memoryMessage, setMemoryMessage] = useState("");
+  const [gameActionMessage, setGameActionMessage] = useState("");
+  const [identity, setIdentity] = useState<SuiIdentity>(LOCAL_IDENTITY);
+  const [isNameEquipped, setIsNameEquipped] = useState(false);
+  const [latestWalrusBlob, setLatestWalrusBlob] = useState("");
+  const [messengerMessages, setMessengerMessages] = useState<MessengerEntry[]>(STARTER_MESSAGES);
+  const [activeVillageZoneId, setActiveVillageZoneId] = useState<VillageZoneId>("suins-gate");
+  const [isPetdexOpen, setIsPetdexOpen] = useState(false);
+  const [worldMode, setWorldMode] = useState<WorldMode>("arena");
+  const [gameCommand, setGameCommand] = useState<GameCommand>();
+  const [gameCommandNonce, setGameCommandNonce] = useState(0);
+  const [mapFriends, setMapFriends] = useState<GameFriend[]>(STARTER_FRIENDS);
+  const [mapRevision, setMapRevision] = useState(1);
+  const [ownedLofiNfts, setOwnedLofiNfts] = useState<OwnedLofiNft[]>(DEMO_LOFI_NFTS);
+  const [isLoadingLofiNfts, setIsLoadingLofiNfts] = useState(false);
+  const [scanAddressInput, setScanAddressInput] = useState("");
+  const [lastScannedAddress, setLastScannedAddress] = useState("");
+  const [scanError, setScanError] = useState("");
+  const [lofiMarket, setLofiMarket] = useState<TradeportLofiTopResponse | null>(null);
+  const [isLoadingMarket, setIsLoadingMarket] = useState(false);
+  const [marketError, setMarketError] = useState("");
+  const [marketMode, setMarketMode] = useState<"price" | "rarity">("price");
+  const [activeLofiSource, setActiveLofiSource] = useState<TradeportLofiItem | null>(null);
+  const [lofiAnimationRoster, setLofiAnimationRoster] = useState<LofiAnimationVariant[]>([]);
+  const [activeLofiVariant, setActiveLofiVariant] = useState<LofiAnimationVariant | null>(null);
+  const [lofiGeneratedPacks, setLofiGeneratedPacks] = useState<LofiGeneratedPetPack[]>([]);
+  const [activeGeneratedPack, setActiveGeneratedPack] = useState<LofiGeneratedPetPack | null>(null);
+  const [isGeneratingLofiPacks, setIsGeneratingLofiPacks] = useState(false);
+  const [generatedPackError, setGeneratedPackError] = useState("");
+  const [arenaSnapshot, setArenaSnapshot] = useState<ArenaRunSnapshot>(() => createIdleArenaSnapshot());
+  const [arenaSummary, setArenaSummary] = useState<ArenaRunSummary | null>(null);
+  const [isSavingArenaProof, setIsSavingArenaProof] = useState(false);
+  const [arenaProofMessage, setArenaProofMessage] = useState("");
+
+  const owner = account?.address ?? "local-demo-owner";
+  const activeIdentity = identityDisplayName(owner, identity.suinsName);
+  const activeVillageZone = VILLAGE_ZONES.find((zone) => zone.id === activeVillageZoneId) ?? VILLAGE_ZONES[0];
+  const activeAnimationMeaning = ANIMATION_MEANINGS.find((meaning) => meaning.state === petState) ?? ANIMATION_MEANINGS[0];
+  const progress = useMemo(() => Math.min(100, gameState.xp % 100), [gameState.xp]);
+  const evolutionRequiredLevel = nextEvolutionRequiredLevel(gameState);
+  const nameQuests = useMemo(
+    () =>
+      buildNameQuests({
+        hasWallet: Boolean(account?.address),
+        hasSuiName: Boolean(identity.suinsName),
+        isEquipped: isNameEquipped,
+        isMinted,
+        hasAgentRun: Boolean(agentResult && agentResult.action !== "failed"),
+        hasMemory: Boolean(gameState.latestMemoryBlob),
+        hasWalrusProof: Boolean(latestWalrusBlob),
+        hasEvolution: gameState.evolutionStage > 0
+      }),
+    [account?.address, agentResult, gameState.evolutionStage, gameState.latestMemoryBlob, identity.suinsName, isMinted, isNameEquipped, latestWalrusBlob]
+  );
+  const completedQuestCount = nameQuests.filter((quest) => quest.complete).length;
+  const onlineCount = 1 + mapFriends.length + Number(Boolean(account?.address));
+  const walletLofiCount = ownedLofiNfts.filter((nft) => nft.source === "wallet").length;
+  const selectedMarketItems = marketMode === "price" ? lofiMarket?.mostExpensive ?? [] : lofiMarket?.rarest ?? [];
+  const animationMintFeeSui = lofiMarket?.animationMintFeeSui ?? DEFAULT_ANIMATION_MINT_FEE_SUI;
+  const activeGamePetVariant: GamePetVariant | null = useMemo(
+    () =>
+      activeLofiVariant && !activeGeneratedPack
+        ? {
+            id: activeLofiVariant.id,
+            name: activeLofiVariant.name,
+            tintHex: activeLofiVariant.tintHex,
+            accentHex: activeLofiVariant.accentHex
+          }
+        : null,
+    [activeGeneratedPack, activeLofiVariant]
+  );
+  const activeGamePetAtlas: GamePetAtlas | null = useMemo(
+    () =>
+      activeGeneratedPack?.status === "ready"
+        ? {
+            textureKey: `generated-${activeGeneratedPack.packId}`,
+            spritesheetUrl: activeGeneratedPack.spritesheetUrl,
+            petJsonUrl: activeGeneratedPack.petJsonUrl
+          }
+        : null,
+    [activeGeneratedPack]
+  );
+  const arenaSecondsLeft = Math.ceil(arenaSnapshot.timeLeftMs / 1000);
+  const arenaRunLabel: Record<ArenaRunPhase, string> = {
+    idle: "Ready",
+    running: "Survive",
+    victory: "Victory",
+    failed: "Failed",
+    proof_saved: "Proof saved"
+  };
+
+  useEffect(() => {
+    if (!account?.address) {
+      setIdentity(LOCAL_IDENTITY);
+      setIsNameEquipped(false);
+      setOwnedLofiNfts(DEMO_LOFI_NFTS);
+      setIsLoadingLofiNfts(false);
+      setLastScannedAddress("");
+      setScanError("");
+      return;
+    }
+
+    let cancelled = false;
+    const address = account.address;
+    setIsLoadingLofiNfts(true);
+    setScanAddressInput(address);
+    setLastScannedAddress(address);
+    setScanError("");
+    setIdentity({
+      status: "loading",
+      address,
+      displayName: shortAddress(address),
+      suinsName: null,
+      balanceMist: null,
+      ownedObjectCount: null
+    });
+    setIsNameEquipped(false);
+
+    async function loadIdentity() {
+      const [namesResult, balanceResult, objectsResult] = await Promise.allSettled([
+        suiClient.resolveNameServiceNames({ address, limit: 1, format: "at" }),
+        suiClient.getBalance({ owner: address }),
+        loadOwnedLofiObjects(suiClient, address)
+      ]);
+
+      if (cancelled) {
+        return;
+      }
+
+      const suinsName =
+        namesResult.status === "fulfilled" ? normalizeSuiName(namesResult.value.data[0] ?? null) : null;
+      const balanceMist = balanceResult.status === "fulfilled" ? balanceResult.value.totalBalance : null;
+      const ownedObjectCount = objectsResult.status === "fulfilled" ? objectsResult.value.objectCount : null;
+      const lofiNfts = objectsResult.status === "fulfilled" ? objectsResult.value.lofiNfts : [];
+      const lookupError =
+        namesResult.status === "rejected" ? namesResult.reason instanceof Error ? namesResult.reason.message : "SuiNS lookup unavailable" : undefined;
+
+      setIdentity({
+        status: lookupError ? "error" : suinsName ? "resolved" : "no-name",
+        address,
+        displayName: identityDisplayName(address, suinsName),
+        suinsName,
+        balanceMist,
+        ownedObjectCount,
+        error: lookupError
+      });
+      setOwnedLofiNfts(lofiNfts);
+      setIsLoadingLofiNfts(false);
+      setLastScannedAddress(address);
+    }
+
+    void loadIdentity();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [account?.address, suiClient]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      if (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable) {
+        return;
+      }
+
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        startHeldMove("left");
+      }
+
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        startHeldMove("right");
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        startHeldMove("up");
+      }
+
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        startHeldMove("down");
+      }
+
+      if (event.key.toLowerCase() === "e") {
+        event.preventDefault();
+        void interactWithVillageZone(activeVillageZone);
+      }
+    }
+
+    function handleKeyUp(event: KeyboardEvent) {
+      if (event.key === "ArrowLeft") {
+        stopHeldMove("left");
+      }
+      if (event.key === "ArrowRight") {
+        stopHeldMove("right");
+      }
+      if (event.key === "ArrowUp") {
+        stopHeldMove("up");
+      }
+      if (event.key === "ArrowDown") {
+        stopHeldMove("down");
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", stopAllHeldMoves);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", stopAllHeldMoves);
+    };
+  });
+
+  useEffect(() => {
+    if (!isPetdexOpen || lofiMarket || isLoadingMarket) {
+      return;
+    }
+
+    void loadTradeportTopLofi(false);
+  }, [isPetdexOpen, lofiMarket, isLoadingMarket]);
+
+  const addProofEntries = (entries: ProofEntry[]) => {
+    setProofs((current) => mergeProofEntries(current, entries));
+  };
+
+  const pushMessengerMessage = (speaker: string, message: string) => {
+    setMessengerMessages((current) => [{ speaker, message }, ...current].slice(0, 8));
+  };
+
+  const setSingleTimeline = (entry: TimelineEntry) => {
+    setTimeline([entry]);
+    setActiveStage(0);
+  };
+
+  function sendGameCommand(command: GameCommand) {
+    setGameCommand(command);
+    setGameCommandNonce((current) => current + 1);
+  }
+
+  function sendHeldMoveVector() {
+    const held = heldDirectionsRef.current;
+    const dx = (held.has("right") ? 1 : 0) - (held.has("left") ? 1 : 0);
+    const dy = (held.has("down") ? 1 : 0) - (held.has("up") ? 1 : 0);
+    sendGameCommand({ type: "setMoveVector", dx, dy });
+
+    if (dx !== 0 || dy !== 0) {
+      const nextState = dx < 0 ? "running-left" : dx > 0 ? "running-right" : "running";
+      setPetState(nextState);
+      setGameActionMessage(worldMode === "arena" ? "Holding movement in Cuddle Arena." : "Holding movement through PetLofi Village.");
+      return;
+    }
+
+    setPetState("idle");
+  }
+
+  function startHeldMove(direction: HeldDirection) {
+    if (heldDirectionsRef.current.has(direction)) {
+      return;
+    }
+
+    heldDirectionsRef.current.add(direction);
+    sendHeldMoveVector();
+  }
+
+  function stopHeldMove(direction: HeldDirection) {
+    if (!heldDirectionsRef.current.delete(direction)) {
+      return;
+    }
+
+    sendHeldMoveVector();
+  }
+
+  function stopAllHeldMoves() {
+    if (heldDirectionsRef.current.size === 0) {
+      return;
+    }
+
+    heldDirectionsRef.current.clear();
+    sendHeldMoveVector();
+  }
+
+  function dpadDelta(direction: HeldDirection) {
+    if (direction === "up") {
+      return { x: 0, y: -3 };
+    }
+    if (direction === "down") {
+      return { x: 0, y: 3 };
+    }
+    if (direction === "left") {
+      return { x: -3, y: 0 };
+    }
+    return { x: 3, y: 0 };
+  }
+
+  function startDpadHold(direction: HeldDirection) {
+    dpadPressStartedAtRef.current[direction] = window.performance.now();
+    startHeldMove(direction);
+  }
+
+  function stopDpadHold(direction: HeldDirection) {
+    const startedAt = dpadPressStartedAtRef.current[direction];
+    dpadPressStartedAtRef.current[direction] = 0;
+    stopHeldMove(direction);
+
+    if (startedAt && window.performance.now() - startedAt < 145) {
+      const delta = dpadDelta(direction);
+      movePetBy(delta.x, delta.y);
+    }
+  }
+
+  function cancelDpadHold(direction: HeldDirection) {
+    dpadPressStartedAtRef.current[direction] = 0;
+    stopHeldMove(direction);
+  }
+
+  function handleSceneZoneChange(zoneId: GameHotspotId) {
+    const zone = VILLAGE_ZONES.find((item) => item.id === zoneId);
+    if (!zone) {
+      return;
+    }
+
+    setActiveVillageZoneId(zoneId);
+    setGameActionMessage(`${activeIdentity}'s companion is near ${zone.title}. ${zone.action} is ready.`);
+  }
+
+  function handleSceneAction(action: string) {
+    if (action === "arena_home_to_village") {
+      setWorldMode("village");
+      return;
+    }
+
+    if (action === "snack_pickup") {
+      if (worldMode === "arena") {
+        setGameActionMessage("Snack picked up: safety restored and arena score increased.");
+        addProofEntries([
+          { label: "Latest game action", value: "arena_snack_pickup" },
+          { label: "Latest animation state", value: petState }
+        ]);
+        return;
+      }
+      runLocalGameAction("feed");
+      return;
+    }
+
+    if (action === "locked_companion_waiting") {
+      setGameActionMessage("Locked companion slots are future limited SuiNS community pets.");
+      addProofEntries([
+        { label: "Latest game action", value: "locked_companion_waiting" },
+        { label: "Latest animation state", value: "waiting" }
+      ]);
+      return;
+    }
+
+    if (
+      action.startsWith("walk_to_") ||
+      action.startsWith("visit_friend_") ||
+      action === "free_walk" ||
+      action === "village_walk" ||
+      action === "map_click_walk" ||
+      action === "arena_dodge" ||
+      action === "arena_run_started" ||
+      action === "arena_cuddle_attack" ||
+      action === "arena_agent_special" ||
+      action === "arena_agent_special_charged" ||
+      action === "arena_victory" ||
+      action === "arena_failed"
+    ) {
+      addProofEntries([
+        { label: "Latest game action", value: action },
+        { label: "Latest animation state", value: petState }
+      ]);
+    }
+  }
+
+  function addMapFriend() {
+    const nextFriend = FRIEND_POOL.find((friend) => !mapFriends.some((existing) => existing.id === friend.id));
+    if (!nextFriend) {
+      setGameActionMessage("All local friend plots are already patched into the map contract.");
+      return;
+    }
+
+    const nextRevision = mapRevision + 1;
+    const nextFriends = [...mapFriends, nextFriend];
+    setMapFriends(nextFriends);
+    setMapRevision(nextRevision);
+    setWorldMode("village");
+    setPetState("waving");
+    sendGameCommand({ type: "syncMap", friends: nextFriends, mapRevision: nextRevision });
+    setSingleTimeline({
+      petState: "waving",
+      label: "Map pixel patched",
+      detail: `${nextFriend.name} claimed a friend plot. The village map expanded from local map-contract revision ${mapRevision} to r${nextRevision}.`
+    });
+    setGameActionMessage(`${nextFriend.name} joined the village. Map pixel contract r${nextRevision} added a new friend plot.`);
+    addProofEntries([
+      { label: "Latest game action", value: "add_friend_to_map" },
+      { label: "Map contract revision", value: `r${nextRevision}` },
+      { label: "Latest map patch", value: `add_friend(${nextFriend.name})` },
+      { label: "Friend plots", value: String(nextFriends.length) }
+    ]);
+    pushMessengerMessage("Map Contract", `${nextFriend.name} joined PetLofi Village; pixel plot committed in local proof mode.`);
+  }
+
+  function equipOwnedLofiNft(nft: OwnedLofiNft) {
+    setActiveLofiSource(null);
+    setActiveLofiVariant(null);
+    setActiveGeneratedPack(null);
+    setPetName(nft.name);
+    setPetId(nft.objectId);
+    setIsMinted(true);
+    setIsNameEquipped(true);
+    setPetState("waving");
+    sendGameCommand({ type: "setPetState", petState: "waving" });
+    setSingleTimeline({
+      petState: "waving",
+      label: "Wallet Lofi equipped",
+      detail:
+        nft.source === "wallet"
+          ? `${nft.name} from ${shortAddress(owner)} is now the active identity companion.`
+          : `${nft.name} demo skin is equipped until a wallet Lofi NFT is found.`
+    });
+    setGameActionMessage(`${nft.name} equipped from ${nft.source === "wallet" ? "wallet address" : "local demo set"}. Animation still uses the Codex-compatible Lofi rig.`);
+    addProofEntries([
+      { label: "Active Lofi NFT", value: nft.name },
+      { label: "Active Lofi object", value: nft.objectId },
+      { label: "NFT source", value: nft.source === "wallet" ? shortAddress(owner) : "local-demo" },
+      { label: "Latest game action", value: "equip_owned_lofi_nft" },
+      { label: "Latest animation state", value: "waving" }
+    ]);
+    pushMessengerMessage("Petdex Gallery", `${activeIdentity} equipped ${nft.name} as the visible Lofi companion.`);
+  }
+
+  async function scanOwnerForLofiNfts(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+    const addressToScan = scanAddressInput.trim();
+
+    if (!addressToScan) {
+      setScanError("Paste a Sui owner address to scan its Lofi NFTs.");
+      return;
+    }
+
+    setIsLoadingLofiNfts(true);
+    setScanError("");
+
+    try {
+      const result = await loadOwnedLofiObjects(suiClient, addressToScan);
+      setOwnedLofiNfts(result.lofiNfts);
+      setLastScannedAddress(addressToScan);
+      setGameActionMessage(`Scanned ${shortAddress(addressToScan)}: ${result.lofiNfts.length} Lofi/Yeti-like NFT match${result.lofiNfts.length === 1 ? "" : "es"} from ${result.objectCount} Sui objects.`);
+      addProofEntries([
+        { label: "Latest game action", value: "scan_owner_lofi_nfts" },
+        { label: "Scanned owner", value: shortAddress(addressToScan) },
+        { label: "Scanned objects", value: String(result.objectCount) },
+        { label: "Lofi NFT matches", value: String(result.lofiNfts.length) }
+      ]);
+      pushMessengerMessage("Petdex Scanner", `${shortAddress(addressToScan)} scan found ${result.lofiNfts.length} Lofi/Yeti-like companion candidate${result.lofiNfts.length === 1 ? "" : "s"}.`);
+    } catch (error) {
+      setOwnedLofiNfts([]);
+      setLastScannedAddress(addressToScan);
+      setScanError(error instanceof Error ? error.message : "Could not scan this owner address.");
+    } finally {
+      setIsLoadingLofiNfts(false);
+    }
+  }
+
+  async function loadTradeportTopLofi(manual: boolean) {
+    setIsLoadingMarket(true);
+    setMarketError("");
+
+    try {
+      const response = await fetch("/api/lofi/top", { cache: "no-store" });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      const payload = (await response.json()) as TradeportLofiTopResponse;
+      const animationRoster = buildUniqueLofiAnimationVariants(
+        [...payload.mostExpensive, ...payload.rarest],
+        payload.animationMintFeeSui
+      );
+      setLofiMarket(payload);
+      setLofiAnimationRoster(animationRoster);
+
+      if (payload.warning) {
+        setMarketError(payload.warning);
+      }
+
+      if (manual || !payload.warning) {
+        addProofEntries([
+          { label: "Latest game action", value: "crawl_tradeport_lofi_top10" },
+          { label: "TradePort collection", value: `${payload.collection.supply} NFTs / floor ${payload.collection.floorSui} SUI` },
+          { label: "Animation mint fee", value: `${payload.animationMintFeeSui} SUI` }
+        ]);
+      }
+
+      if (manual) {
+        pushMessengerMessage("Petdex Crawler", `Crawled TradePort Lofi top 10 and loaded ${animationRoster.length} preview rigs. Use Stage Batch A to generate real NFT-to-atlas packs.`);
+        void loadGeneratedLofiPacks(activeLofiSource?.tokenId ?? null, true);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "TradePort crawl failed.";
+      setMarketError(message);
+      pushMessengerMessage("Petdex Crawler", `TradePort crawl failed: ${message}`);
+    } finally {
+      setIsLoadingMarket(false);
+    }
+  }
+
+  async function loadGeneratedLofiPacks(selectedTokenId?: string | null, announce = false) {
+    setIsGeneratingLofiPacks(true);
+    setGeneratedPackError("");
+
+    try {
+      const suffix = selectedTokenId ? `?selected=${encodeURIComponent(selectedTokenId)}` : "";
+      const response = await fetch(`/api/lofi/generated${suffix}`, { cache: "no-store" });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      const payload = (await response.json()) as LofiGeneratedResponse;
+      setLofiGeneratedPacks(payload.packs);
+      if (payload.warning) {
+        setGeneratedPackError(payload.warning);
+      }
+
+      addProofEntries([
+        { label: "Generated Lofi packs", value: `${payload.readyCount} real / ${payload.previewCount} preview / ${payload.queuedCount} queued` },
+        { label: "Latest game action", value: "read_top10_lofi_manifest" }
+      ]);
+
+      if (announce) {
+        pushMessengerMessage(
+          "Petdex Animator",
+          `Loaded top-10 Lofi pack status: ${payload.readyCount} real ready, ${payload.previewCount} fallback preview, ${payload.queuedCount} queued.`
+        );
+      }
+
+      return payload.packs;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not stage generated Lofi packs.";
+      setGeneratedPackError(message);
+      pushMessengerMessage("Petdex Animator", `Generated pack staging failed: ${message}`);
+      return [];
+    } finally {
+      setIsGeneratingLofiPacks(false);
+    }
+  }
+
+  async function stageGeneratedLofiPacks(
+    mode: LofiGenerationRequestMode = "batchA",
+    selectedTokenId?: string | null,
+    announce = false,
+    refine = false
+  ) {
+    setIsGeneratingLofiPacks(true);
+    setGeneratedPackError("");
+
+    try {
+      const response = await fetch("/api/lofi/generated", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode, selectedTokenId, refine })
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      const payload = (await response.json()) as LofiGeneratedResponse;
+      setLofiGeneratedPacks(payload.packs);
+      if (payload.warning) {
+        setGeneratedPackError(payload.warning);
+      }
+
+      addProofEntries([
+        { label: "Generated Lofi packs", value: `${payload.readyCount} real / ${payload.previewCount} preview / ${payload.queuedCount} queued` },
+        { label: "Latest game action", value: `stage_${mode}_lofi_atlases` }
+      ]);
+
+      if (announce) {
+        pushMessengerMessage(
+          "Petdex Animator",
+          `Staged ${mode}: ${payload.readyCount} real ready, ${payload.previewCount} fallback preview, ${payload.queuedCount} queued.`
+        );
+      }
+
+      return payload.packs;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not stage generated Lofi packs.";
+      setGeneratedPackError(message);
+      pushMessengerMessage("Petdex Animator", `Generated pack staging failed: ${message}`);
+      return [];
+    } finally {
+      setIsGeneratingLofiPacks(false);
+    }
+  }
+
+  async function requestAnimationMintPass(item: TradeportLofiItem) {
+    setActiveLofiSource(item);
+    const existingPack = lofiGeneratedPacks.find((pack) => pack.tokenId === item.tokenId);
+    if (existingPack && isRealGeneratedPack(existingPack)) {
+      equipGeneratedLofiPack(existingPack, item);
+      return;
+    }
+
+    if (!existingPack || existingPack.status === "queued" || existingPack.status === "preview") {
+      setGameActionMessage(`${item.name} is selected. Staging its real NFT-to-atlas pack now.`);
+      const packs = await stageGeneratedLofiPacks("selected", item.tokenId, true);
+      const generated = packs.find((pack) => pack.tokenId === item.tokenId);
+      if (generated && isRealGeneratedPack(generated)) {
+        equipGeneratedLofiPack(generated, item);
+        return;
+      }
+      if (generated?.status === "preview") {
+        setGameActionMessage(`${item.name} could not resolve NFT source art yet. Showing a clearly labeled preview rig until a cached source image is available.`);
+      } else if (!generated) {
+        setGameActionMessage(`${item.name} is outside the current top-10 manifest. Showing the shared preview rig until it is added to the staged list.`);
+      }
+    }
+
+    const variant = lofiAnimationRoster.find((candidate) => candidate.tokenId === item.tokenId);
+    if (variant) {
+      equipLofiAnimationVariant(variant, item);
+      return;
+    }
+
+    const isOwnedByCurrentWallet = Boolean(
+      account?.address && item.owner && item.owner.toLowerCase() === account.address.toLowerCase()
+    );
+
+    if (isOwnedByCurrentWallet) {
+      setPetName(item.name);
+      setPetId(`tradeport:${item.id}`);
+      setIsMinted(true);
+      setIsNameEquipped(true);
+      setPetState("waving");
+      sendGameCommand({ type: "setPetState", petState: "waving" });
+      setSingleTimeline({
+        petState: "waving",
+        label: "Owned Lofi equipped",
+        detail: `${item.name} is owned by the connected wallet, so PetLofi can generate its animation pack without the external mint pass.`
+      });
+      setGameActionMessage(`${item.name} equipped from the official Lofi collection crawl.`);
+      addProofEntries([
+        { label: "Active Lofi NFT", value: item.name },
+        { label: "Active Lofi object", value: item.tokenId },
+        { label: "Rarity rank", value: item.ranking ? `#${item.ranking}` : "unknown" },
+        { label: "Latest game action", value: "equip_tradeport_lofi_nft" },
+        { label: "Latest animation state", value: "waving" }
+      ]);
+      pushMessengerMessage("Petdex Gallery", `${activeIdentity} equipped owned ${item.name} from the official Lofi collection.`);
+      return;
+    }
+
+    setPetState("waiting");
+    setSingleTimeline({
+      petState: "waiting",
+      label: "Animation pass required",
+      detail: `${item.name} belongs to another owner. Mint the ${animationMintFeeSui} SUI animation pass before generating a Codex-compatible 8x9 atlas.`
+    });
+    setGameActionMessage(`${item.name} queued as an external Lofi candidate. Required mint pass: ${animationMintFeeSui} SUI before animation generation.`);
+    addProofEntries([
+      { label: "Animation pass candidate", value: item.name },
+      { label: "Candidate token", value: shortObjectId(item.tokenId) },
+      { label: "External Lofi owner", value: shortObjectId(item.owner) },
+      { label: "Animation mint fee", value: `${animationMintFeeSui} SUI` },
+      { label: "Latest game action", value: "mint_animation_pass_required" },
+      { label: "Latest animation state", value: "waiting" }
+    ]);
+    pushMessengerMessage(
+      "Petdex Market",
+      `${item.name} is external; mint an animation pass (${animationMintFeeSui} SUI) to generate and store its PetLofi pack.`
+    );
+  }
+
+  function equipGeneratedLofiPack(pack: LofiGeneratedPetPack, sourceItem?: TradeportLofiItem) {
+    if (!isRealGeneratedPack(pack)) {
+      setGameActionMessage(`${pack.name} is only a fallback preview right now. Generate with a resolved NFT source image before equipping it as a real atlas.`);
+      pushMessengerMessage("Petdex Animator", `${pack.name} stayed in preview mode because no real NFT source image was resolved yet.`);
+      return;
+    }
+
+    const item = sourceItem ?? selectedMarketItems.find((candidate) => candidate.tokenId === pack.tokenId);
+    if (item) {
+      setActiveLofiSource(item);
+    }
+    setActiveGeneratedPack(pack);
+    setActiveLofiVariant(null);
+    setPetName(pack.name);
+    setPetId(pack.packId);
+    setIsMinted(true);
+    setIsNameEquipped(true);
+    setPetState("waving");
+    sendGameCommand({
+      type: "setPetAtlas",
+      atlas: {
+        textureKey: `generated-${pack.packId}`,
+        spritesheetUrl: pack.spritesheetUrl,
+        petJsonUrl: pack.petJsonUrl
+      }
+    });
+    sendGameCommand({ type: "setPetVariant", variant: null });
+    sendGameCommand({ type: "setPetState", petState: "waving" });
+    const refinedLabel = pack.generationMode === "hatch-refined";
+    setSingleTimeline({
+      petState: "waving",
+      label: refinedLabel ? "Refined Lofi atlas equipped" : "Real Lofi atlas equipped",
+      detail: `${pack.name} is running from a generated 8x9 NFT-to-atlas pet pack sourced via ${pack.sourceOrigin ?? "NFT image"}, not the shared preview tint rig.`
+    });
+    setGameActionMessage(
+      `${pack.name} equipped as a ${refinedLabel ? "hatch-refined" : "real NFT-sourced"} 8x9 companion. Arena proofs now include token, source hash, origin, and pack hash metadata.`
+    );
+    addProofEntries([
+      { label: "Active Lofi pack", value: pack.packId },
+      { label: "Active Lofi token", value: shortObjectId(pack.tokenId) },
+      { label: "Generated pack status", value: generatedPackLabel(pack) },
+      { label: "Generated source origin", value: pack.sourceOrigin ?? "unknown" },
+      { label: "Generated mode", value: pack.generationMode ?? "deterministic" },
+      { label: "Source image hash", value: pack.sourceImageHash?.slice(0, 16) ?? "pending" },
+      { label: "Generated pack hash", value: pack.packHash?.slice(0, 16) ?? "pending" },
+      { label: "Latest game action", value: "equip_generated_lofi_atlas" },
+      { label: "Latest animation state", value: "waving" }
+    ]);
+    pushMessengerMessage(
+      "Petdex Animator",
+      `${pack.name} equipped as a ${refinedLabel ? "refined" : "real generated"} Lofi atlas for Cuddle Arena.`
+    );
+  }
+
+  function equipLofiAnimationVariant(variant: LofiAnimationVariant, sourceItem?: TradeportLofiItem) {
+    const item = sourceItem ?? selectedMarketItems.find((candidate) => candidate.tokenId === variant.tokenId);
+    if (item) {
+      setActiveLofiSource(item);
+    }
+    setActiveGeneratedPack(null);
+    setActiveLofiVariant(variant);
+    setPetName(variant.name);
+    setPetId(`lofi-animation-preview:${variant.tokenId}`);
+    setPetState("waving");
+    sendGameCommand({
+      type: "setPetVariant",
+      variant: {
+        id: variant.id,
+        name: variant.name,
+        tintHex: variant.tintHex,
+        accentHex: variant.accentHex
+      }
+    });
+    sendGameCommand({ type: "setPetState", petState: "waving" });
+    setSingleTimeline({
+      petState: "waving",
+      label: "Lofi animation equipped",
+      detail: `${variant.name} is now the active animated preview rig. Full bespoke hatch-pet atlas generation still requires the animation pass.`
+    });
+    setGameActionMessage(`${variant.name} equipped as a generated top-10 animation preview. This changes the game pet now; bespoke atlas generation is the next paid pass step.`);
+    addProofEntries([
+      { label: "Active Lofi animation", value: variant.name },
+      { label: "Animation source token", value: shortObjectId(variant.tokenId) },
+      { label: "Source rank", value: variant.ranking ? `#${variant.ranking}` : "unknown" },
+      { label: "Animation pass", value: `${variant.animationPassFeeSui} SUI for bespoke atlas` },
+      { label: "Latest game action", value: "equip_top10_lofi_animation" },
+      { label: "Latest animation state", value: "waving" }
+    ]);
+    pushMessengerMessage("Petdex Animator", `${variant.name} joined the active animated roster from the Lofi top list.`);
+  }
+
+  function movePetBy(deltaX: number, deltaY: number) {
+    const nextState = deltaX < 0 ? "running-left" : deltaX > 0 ? "running-right" : "running";
+    playWalkAnimation(nextState);
+    sendGameCommand({ type: "move", dx: deltaX, dy: deltaY });
+    setGameActionMessage(worldMode === "arena" ? "Dodging in Cuddle Arena." : "Walking through PetLofi Village. Press E or Interact to use the nearest zone.");
+    addProofEntries([
+      { label: "Latest game action", value: worldMode === "arena" ? "arena_dodge" : "village_walk" },
+      { label: "Latest animation state", value: nextState }
+    ]);
+  }
+
+  function playWalkAnimation(nextState: PetState) {
+    setPetState(nextState);
+    sendGameCommand({ type: "setPetState", petState: nextState });
+  }
+
+  function walkToZone(zone: VillageZone) {
+    const nextState = zone.x < activeVillageZone.x ? "running-left" : "running-right";
+    playWalkAnimation(nextState);
+    sendGameCommand({ type: "goToZone", zoneId: zone.id });
+    setActiveVillageZoneId(zone.id);
+    setSingleTimeline({
+      petState: nextState,
+      label: `Arrived at ${zone.title}`,
+      detail: zone.detail
+    });
+    setGameActionMessage(`${activeIdentity}'s companion is at ${zone.title}. ${zone.action} is ready.`);
+  }
+
+  async function interactWithVillageZone(zone: VillageZone) {
+    walkToZone(zone);
+    await wait(180);
+
+    if (zone.id === "suins-gate") {
+      if (!isMinted) {
+        await mintLofiPet();
+        return;
+      }
+
+      if (!isNameEquipped) {
+        runLocalGameAction("equip-suins");
+        return;
+      }
+
+      runLocalGameAction("evolve");
+      return;
+    }
+
+    if (zone.id === "agent-forge") {
+      await executeAgentRun();
+      return;
+    }
+
+    if (zone.id === "memwal-library") {
+      await saveMemory();
+      return;
+    }
+
+    if (zone.id === "walrus-vault") {
+      await syncMemoryAction();
+      return;
+    }
+
+    if (zone.id === "rest-hut") {
+      runLocalGameAction("rest");
+      return;
+    }
+
+    if (zone.id === "feed-stall") {
+      runLocalGameAction("feed");
+      return;
+    }
+
+    setIsPetdexOpen(true);
+    setPetState("waving");
+    addProofEntries([
+      { label: "Latest game action", value: "open_petdex" },
+      { label: "Latest animation state", value: "waving" }
+    ]);
+    pushMessengerMessage("Petdex Gallery", `${activeIdentity} opened the companion gallery.`);
+  }
+
+  async function mintLofiPet() {
+    setIsMinting(true);
+    setMintMessage("Minting CLAY Lofi Yeti...");
+    setGameActionMessage("");
+    setPetState("waiting");
+    addProofEntries([
+      { label: "Latest action type", value: "mint_pet" },
+      { label: "Latest animation state", value: "waiting" }
+    ]);
+
+    try {
+      const [petJsonResponse, spritesheetResponse] = await Promise.all([
+        fetch("/pets/lofi-yeti/pet.json"),
+        fetch("/pets/lofi-yeti/spritesheet.webp")
+      ]);
+
+      if (!petJsonResponse.ok || !spritesheetResponse.ok) {
+        throw new Error("Default CLAY Lofi pet pack is missing.");
+      }
+
+      const petJson = await petJsonResponse.blob();
+      const spritesheet = await spritesheetResponse.blob();
+      const data = new FormData();
+      data.set("petJson", new File([petJson], "pet.json", { type: "application/json" }));
+      data.set("spritesheet", new File([spritesheet], "spritesheet.webp", { type: "image/webp" }));
+
+      const response = await fetch("/api/walrus/upload", {
+        method: "POST",
+        body: data
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      const payload = (await response.json()) as PetPackUploadResponse;
+      const compactBlob = payload.blobId.replace(/^local_?/, "").replace(/[^a-zA-Z0-9]/g, "").slice(0, 12);
+      const objectId = `local-lofi-${compactBlob}`;
+      setPetName(payload.pet.displayName);
+      setPetId(objectId);
+      setIsMinted(true);
+      setLatestWalrusBlob(payload.blobId);
+      setMintMessage(
+        `${payload.pet.displayName} minted in ${payload.storage} proof mode. Asset blob ${payload.blobId} is ready for Sui mint_pet.`
+      );
+      addProofEntries([
+        { label: "Minted pet object", value: objectId },
+        { label: "Mint asset blob", value: payload.blobId },
+        { label: "Mint proof URL", value: payload.proofUrl },
+        { label: "Latest action type", value: "mint_pet" },
+        { label: "Latest animation state", value: "waving" }
+      ]);
+      setTimeline([
+        { petState: "waiting", label: "Pack validated", detail: "pet.json and spritesheet.webp matched the 8x9 Codex pet atlas." },
+        { petState: "jumping", label: "Ownership minted", detail: "The Lofi pet now has a Sui-ready object pointer and Walrus asset blob." },
+        { petState: "waving", label: "Ready for work", detail: "Run an AI task to earn XP, update streak, and produce a proof." }
+      ]);
+      setActiveStage(1);
+      setPetState("jumping");
+      await wait(700);
+      setActiveStage(2);
+      setPetState("waving");
+      pushMessengerMessage(activeIdentity, `minted ${payload.pet.displayName}; Walrus asset blob ${payload.blobId} is now in the passport.`);
+    } catch (error) {
+      setPetState("failed");
+      setMintMessage(error instanceof Error ? error.message : "Mint failed");
+      addProofEntries([
+        { label: "Latest action type", value: "mint_pet_failed" },
+        { label: "Latest animation state", value: "failed" }
+      ]);
+    } finally {
+      setIsMinting(false);
+    }
+  }
+
+  async function executeAgentRun() {
+    if (!isMinted) {
+      setMintMessage("Mint the CLAY Lofi pet first.");
+      setPetState("waiting");
+      return;
+    }
+
+    setIsRunning(true);
+    setAgentResult(null);
+    setMemoryMessage("");
+    setGameActionMessage("");
+
+    try {
+      const response = await fetch("/api/agent/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt, owner, petId, petName, gameState })
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      const payload = (await response.json()) as AgentRunResponse;
+      const nextTimeline = payload.result.stages.map((stage) => ({
+        petState: stage.petState as PetState,
+        label: AGENT_STAGE_LABELS[stage.action] ?? stage.label,
+        detail: stage.detail
+      }));
+
+      setTimeline(nextTimeline);
+      for (let index = 0; index < nextTimeline.length; index += 1) {
+        setActiveStage(index);
+        setPetState(nextTimeline[index].petState);
+        await wait(620);
+      }
+
+      setAgentResult(payload.result);
+      setGameState(payload.gameState);
+      setPetState(payload.result.petState as PetState);
+      setLatestWalrusBlob(payload.walrus.blobId);
+      addProofEntries([
+        { label: "Latest action type", value: payload.result.action },
+        { label: "Latest animation state", value: payload.result.petState },
+        { label: "Latest task digest", value: payload.result.proof.digest },
+        { label: "Walrus proof", value: `${payload.walrus.blobId} (${payload.walrus.storage})` },
+        { label: "Proof URL", value: payload.walrus.proofUrl }
+      ]);
+      if (worldMode === "arena" && arenaSnapshot.phase === "running") {
+        sendGameCommand({ type: "chargeAgentSpecial" });
+        setGameActionMessage("Agent proof charged a full-screen cuddle burst. Press Cuddle Attack to spend it.");
+        addProofEntries([
+          { label: "Arena special", value: "charged_by_agent_task" },
+          { label: "Latest game action", value: "arena_agent_special_charged" }
+        ]);
+      }
+      pushMessengerMessage(activeIdentity, `completed agent work with ${petName}; proof ${payload.result.proof.digest.slice(0, 12)} is linked.`);
+    } catch (error) {
+      setPetState("failed");
+      setGameState((current) => failedLocalRun(current));
+      setSingleTimeline({
+        petState: "failed",
+        label: "Agent blocked",
+        detail: "The run failed in local proof mode, so mood and energy dropped and streak reset."
+      });
+      setAgentResult({
+        runId: "failed",
+        action: "failed",
+        petState: "failed",
+        title: "Agent run failed",
+        summary: error instanceof Error ? error.message : "Unknown error",
+        suggestedMemory: "",
+        stages: [],
+        proof: {
+          digest: "",
+          createdAt: new Date().toISOString(),
+          promptHash: "",
+          memorySummary: ""
+        },
+        gameDelta: { xp: 0, mood: -8, energy: -8, streak: 0 }
+      });
+      addProofEntries([
+        { label: "Latest action type", value: "failed" },
+        { label: "Latest animation state", value: "failed" },
+        { label: "Latest game action", value: "record_agent_action(failed)" }
+      ]);
+      pushMessengerMessage("CLAY Lofi Yeti", `${activeIdentity}'s run was blocked. Mood and energy dropped, streak reset.`);
+    } finally {
+      setIsRunning(false);
+    }
+  }
+
+  async function rememberLatestAgentMemory(): Promise<MemorySaveResponse | null> {
+    if (!agentResult) {
+      setPetState("waiting");
+      setMemoryMessage("Run an agent task first, then save or sync its memory.");
+      return null;
+    }
+
+    const response = await fetch("/api/memwal/remember", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        owner,
+        petId,
+        content: agentResult.suggestedMemory,
+        tags: ["agent-run", "clay-demo", petName]
+      })
+    });
+
+    if (!response.ok) {
+      setPetState("failed");
+      setMemoryMessage(await response.text());
+      return null;
+    }
+
+    const payload = (await response.json()) as MemorySaveResponse;
+    setGameState((current) => ({ ...current, latestMemoryBlob: payload.walrus.blobId }));
+    setLatestWalrusBlob(payload.walrus.blobId);
+    setMemoryMessage(`Saved ${payload.record.id} and linked ${payload.walrus.blobId} (${payload.walrus.storage}).`);
+    addProofEntries([{ label: "Latest memory blob", value: payload.walrus.blobId }]);
+    return payload;
+  }
+
+  async function saveMemory() {
+    const payload = await rememberLatestAgentMemory();
+    if (!payload) {
+      return;
+    }
+
+    setPetState("review");
+    setSingleTimeline({
+      petState: "review",
+      label: "Memory saved",
+      detail: "MemWal stored the task summary and Walrus produced a memory proof blob."
+    });
+    addProofEntries([
+      { label: "Latest action type", value: "sync_memory" },
+      { label: "Latest animation state", value: "review" },
+      { label: "Latest game action", value: "sync_memory" }
+    ]);
+    pushMessengerMessage("MemWal Library", `${activeIdentity}'s pet remembered the task and linked ${payload.walrus.blobId}.`);
+  }
+
+  async function syncMemoryAction() {
+    if (!isMinted) {
+      setPetState("waiting");
+      setGameActionMessage("Mint the pet before syncing memory to its ownership state.");
+      return;
+    }
+
+    let memoryBlob = gameState.latestMemoryBlob;
+    if (!memoryBlob && agentResult) {
+      const payload = await rememberLatestAgentMemory();
+      memoryBlob = payload?.walrus.blobId;
+    }
+
+    if (!memoryBlob) {
+      setPetState("waiting");
+      setSingleTimeline({
+        petState: "waiting",
+        label: "Memory needed",
+        detail: "Run an agent task and save memory before calling sync_memory."
+      });
+      setGameActionMessage("No memory blob yet. Run an agent task, then save or sync memory.");
+      addProofEntries([
+        { label: "Latest game action", value: "sync_memory_waiting" },
+        { label: "Latest animation state", value: "waiting" }
+      ]);
+      return;
+    }
+
+    setPetState("review");
+    setSingleTimeline({
+      petState: "review",
+      label: "Memory synced",
+      detail: "Local proof mode linked the latest memory blob to the pet state. On-chain path: sync_memory(pet, memory_blob, memory_hash)."
+    });
+    setGameActionMessage(`sync_memory local proof linked ${memoryBlob}.`);
+    addProofEntries([
+      { label: "Latest memory blob", value: memoryBlob },
+      { label: "Latest action type", value: "sync_memory" },
+      { label: "Latest animation state", value: "review" },
+      { label: "Latest game action", value: "sync_memory" }
+    ]);
+    pushMessengerMessage("MemWal Library", `${activeIdentity}'s pet synced memory blob ${memoryBlob}.`);
+  }
+
+  function runLocalGameAction(action: LocalGameAction) {
+    if (!isMinted) {
+      setPetState("waiting");
+      setGameActionMessage("Mint the pet first so only the owner can update game state.");
+      addProofEntries([
+        { label: "Latest game action", value: `${action}_waiting_for_owner` },
+        { label: "Latest animation state", value: "waiting" }
+      ]);
+      return;
+    }
+
+    if (action === "equip-suins") {
+      setIsNameEquipped(true);
+      setPetState("waving");
+      setSingleTimeline({
+        petState: "waving",
+        label: "Pet equipped to identity",
+        detail: `${activeIdentity} now has ${petName} as its SuiNS companion in local proof mode.`
+      });
+      setGameActionMessage(`${petName} equipped to ${activeIdentity}. Wallet custody stays with ${shortAddress(owner)}.`);
+      addProofEntries([
+        { label: "SuiNS companion", value: `${activeIdentity} -> ${petId}` },
+        { label: "Latest game action", value: "equip_pet_to_suins" },
+        { label: "Latest action type", value: "identity_bind_local" },
+        { label: "Latest animation state", value: "waving" }
+      ]);
+      pushMessengerMessage(activeIdentity, `equipped ${petName} as the visible companion for this SuiNS identity.`);
+      return;
+    }
+
+    if (action === "feed") {
+      setGameState((current) => feedPet(current));
+      setPetState("waving");
+      setSingleTimeline({
+        petState: "waving",
+        label: "Fed pet",
+        detail: "Local proof mode applied feed(pet, treat_kind=0, clock): mood +10 and energy +4."
+      });
+      setGameActionMessage("feed local proof: mood +10, energy +4.");
+      addProofEntries([
+        { label: "Latest game action", value: "feed" },
+        { label: "Latest action type", value: "feed" },
+        { label: "Latest animation state", value: "waving" }
+      ]);
+      pushMessengerMessage("CLAY Lofi Yeti", `${activeIdentity} fed me. I am ready for the next proof.`);
+      return;
+    }
+
+    if (action === "rest") {
+      setGameState((current) => restPet(current));
+      setPetState("idle");
+      setSingleTimeline({
+        petState: "idle",
+        label: "Rested pet",
+        detail: "Local proof mode applied rest(pet, clock): energy +25 and mood +2."
+      });
+      setGameActionMessage("rest local proof: energy +25, mood +2.");
+      addProofEntries([
+        { label: "Latest game action", value: "rest" },
+        { label: "Latest action type", value: "rest" },
+        { label: "Latest animation state", value: "idle" }
+      ]);
+      pushMessengerMessage("CLAY Lofi Yeti", `${activeIdentity}'s pet is resting at home.`);
+      return;
+    }
+
+    if (action === "move-left" || action === "move-right") {
+      const nextState = action === "move-left" ? "running-left" : "running-right";
+      setPetState(nextState);
+      setSingleTimeline({
+        petState: nextState,
+        label: action === "move-left" ? "Moved left" : "Moved right",
+        detail: "Room movement uses the directional rows so the pet feels like an owned companion, not a static NFT."
+      });
+      setGameActionMessage(`${action} animation previewed for room movement.`);
+      addProofEntries([
+        { label: "Latest game action", value: action },
+        { label: "Latest animation state", value: nextState }
+      ]);
+      pushMessengerMessage("SuiNS Village", `${activeIdentity}'s companion moved ${action === "move-left" ? "left" : "right"}.`);
+      return;
+    }
+
+    if (action === "blocked") {
+      setGameState((current) => failedLocalRun(current));
+      setPetState("failed");
+      setSingleTimeline({
+        petState: "failed",
+        label: "Blocked task",
+        detail: "Local proof mode simulated record_agent_action(failed): mood and energy dropped, streak reset."
+      });
+      setGameActionMessage("record_agent_action(failed) local proof: mood -8, energy -8, streak reset.");
+      addProofEntries([
+        { label: "Latest game action", value: "record_agent_action(failed)" },
+        { label: "Latest action type", value: "failed" },
+        { label: "Latest animation state", value: "failed" }
+      ]);
+      pushMessengerMessage("Proof Board", `${activeIdentity} marked a blocked task; the pet proof trail shows the failed state.`);
+      return;
+    }
+
+    if (!canEvolvePet(gameState)) {
+      setPetState("waiting");
+      setSingleTimeline({
+        petState: "waiting",
+        label: "Evolution locked",
+        detail: `Reach level ${evolutionRequiredLevel} before calling evolve(pet, clock).`
+      });
+      setGameActionMessage(`Evolve locked until level ${evolutionRequiredLevel}. Current level: ${gameState.level}.`);
+      addProofEntries([
+        { label: "Latest game action", value: "evolve_locked" },
+        { label: "Latest animation state", value: "waiting" }
+      ]);
+      return;
+    }
+
+    setGameState((current) => evolvePet(current));
+    setPetState("jumping");
+    setSingleTimeline({
+      petState: "jumping",
+      label: "Pet evolved",
+      detail: "Local proof mode applied evolve(pet, clock): evolution stage increased and mood gained."
+    });
+    setGameActionMessage("evolve local proof: evolution stage +1, mood +12.");
+    addProofEntries([
+      { label: "Latest game action", value: "evolve" },
+      { label: "Latest action type", value: "evolve" },
+      { label: "Latest animation state", value: "jumping" }
+    ]);
+    pushMessengerMessage("SuiNS Gate", `${activeIdentity}'s companion evolved as identity reputation increased.`);
+  }
+
+  function previewAnimation(meaning: AnimationMeaning) {
+    setPetState(meaning.state);
+    sendGameCommand({ type: "setPetState", petState: meaning.state });
+    setSingleTimeline({
+      petState: meaning.state,
+      label: meaning.title,
+      detail: meaning.useCase
+    });
+    setGameActionMessage(`${meaning.state}: ${meaning.useCase}`);
+    addProofEntries([
+      { label: "Latest animation state", value: meaning.state },
+      { label: "Latest game action", value: `animation:${meaning.trigger}` }
+    ]);
+  }
+
+  function runArenaCuddleAttack() {
+    sendGameCommand({ type: "cuddle" });
+  }
+
+  function startArenaRun() {
+    setWorldMode("arena");
+    setArenaSummary(null);
+    setArenaProofMessage("");
+    setArenaSnapshot(createIdleArenaSnapshot());
+    sendGameCommand({ type: "startArenaRun" });
+    setPetState("running");
+    setSingleTimeline({
+      petState: "running",
+      label: "Arena run started",
+      detail: `Survive ${ARENA_RUN_SECONDS}s, collect snacks, clear enemies, and save the proof receipt.`
+    });
+    setGameActionMessage("Cuddle Arena started. Hold arrows/D-pad to dodge, collect snacks, and use cuddle bursts.");
+    addProofEntries([
+      { label: "Latest game action", value: "arena_run_started" },
+      { label: "Arena target", value: `${ARENA_RUN_SECONDS}s survival` },
+      { label: "Latest animation state", value: "running" }
+    ]);
+    pushMessengerMessage("Cuddle Arena", `${activeIdentity}'s pet entered a ${ARENA_RUN_SECONDS}s survival run.`);
+  }
+
+  function resetArenaRun() {
+    setArenaSummary(null);
+    setArenaProofMessage("");
+    setArenaSnapshot(createIdleArenaSnapshot());
+    sendGameCommand({ type: "resetArenaRun" });
+    setPetState("idle");
+    setSingleTimeline(starterTimeline[0]);
+    setGameActionMessage("Arena reset. Start a new run when ready.");
+  }
+
+  function handleArenaTick(snapshot: ArenaRunSnapshot) {
+    setArenaSnapshot(snapshot);
+  }
+
+  function handleArenaComplete(summary: ArenaRunSummary) {
+    setArenaSummary(summary);
+    setArenaSnapshot((current) => ({
+      ...current,
+      phase: summary.outcome === "victory" ? "victory" : "failed",
+      score: summary.score,
+      safety: summary.safety,
+      snacksCollected: summary.snacksCollected,
+      enemiesCleared: summary.enemiesCleared,
+      hitsTaken: summary.hitsTaken,
+      timeLeftMs: Math.max(0, current.timeLeftMs),
+      specialCharged: false,
+      cuddleReady: false
+    }));
+    setGameState((current) => {
+      const xpGain = summary.outcome === "victory" ? Math.max(24, Math.round(summary.score / 8)) : 6;
+      const xp = current.xp + xpGain;
+      return {
+        ...current,
+        xp,
+        level: Math.floor(xp / 100) + 1,
+        mood: Math.max(0, Math.min(100, current.mood + (summary.outcome === "victory" ? 8 : -10))),
+        energy: Math.max(0, Math.min(100, current.energy - Math.max(4, summary.hitsTaken * 4))),
+        streak: summary.outcome === "victory" ? current.streak + 1 : 0
+      };
+    });
+    setPetState(summary.outcome === "victory" ? "jumping" : "failed");
+    setSingleTimeline({
+      petState: summary.outcome === "victory" ? "jumping" : "failed",
+      label: summary.outcome === "victory" ? "Arena cleared" : "Arena failed",
+      detail: `Score ${summary.score}; snacks ${summary.snacksCollected}; enemies ${summary.enemiesCleared}; hits ${summary.hitsTaken}.`
+    });
+    setGameActionMessage(
+      summary.outcome === "victory"
+        ? `Victory: score ${summary.score}. Save the arena proof receipt to Walrus/local proof.`
+        : `Failed: safety reached ${summary.safety}. Save the failed-run receipt or replay.`
+    );
+    addProofEntries([
+      { label: "Arena outcome", value: summary.outcome },
+      { label: "Arena score", value: String(summary.score) },
+      { label: "Latest action type", value: `record_agent_action(${arenaOutcomeAction(summary.outcome)})` },
+      { label: "Latest animation state", value: summary.outcome === "victory" ? "jumping" : "failed" }
+    ]);
+    pushMessengerMessage(
+      "Cuddle Arena",
+      `${activeIdentity}'s pet ${summary.outcome === "victory" ? "survived" : "was overwhelmed"} with score ${summary.score}.`
+    );
+  }
+
+  async function runArenaAgentCharge() {
+    if (arenaSnapshot.phase !== "running" || isRunning) {
+      return;
+    }
+
+    if (isMinted) {
+      await executeAgentRun();
+      return;
+    }
+
+    setPetState("review");
+    setSingleTimeline({
+      petState: "review",
+      label: "Local agent charge",
+      detail: "Local proof mode charged a full-screen cuddle burst before Sui minting."
+    });
+    await wait(520);
+    sendGameCommand({ type: "chargeAgentSpecial" });
+    setGameActionMessage("Local agent proof charged a full-screen cuddle burst. Mint the pet later to make this owner-gated.");
+    addProofEntries([
+      { label: "Arena special", value: "charged_by_local_agent_proof" },
+      { label: "Latest game action", value: "arena_agent_special_charged" },
+      { label: "Latest animation state", value: "review" }
+    ]);
+    pushMessengerMessage("Agent Forge", `${activeIdentity}'s local agent charge is ready for Cuddle Arena.`);
+  }
+
+  function applyArenaCuddleResult() {
+    setGameActionMessage(
+      arenaSnapshot.specialCharged
+        ? "Agent special fired: full-screen proof burst cleared the arena."
+        : `Cuddle burst fired. Cooldown ${Math.round(ARENA_CUDDLE_COOLDOWN_MS / 100) / 10}s.`
+    );
+    addProofEntries([
+      { label: "Latest game action", value: "arena_cuddle_attack" },
+      { label: "Latest animation state", value: "jumping" }
+    ]);
+    pushMessengerMessage("Cuddle Arena", `${activeIdentity}'s pet unleashed a cuddle burst.`);
+  }
+
+  async function saveArenaProof() {
+    if (!arenaSummary) {
+      setArenaProofMessage("Finish an arena run first, then save the proof receipt.");
+      return;
+    }
+
+    setIsSavingArenaProof(true);
+    setArenaProofMessage("Saving arena proof receipt...");
+
+    const receipt: ArenaProofReceipt = {
+      kind: "arena-proof",
+      identity: activeIdentity,
+      petId,
+      petName,
+      lofi: activeGeneratedPack
+        ? {
+            tokenId: activeGeneratedPack.tokenId,
+            packId: activeGeneratedPack.packId,
+            packHash: activeGeneratedPack.packHash,
+            status: activeGeneratedPack.status,
+            sourceUrl: activeGeneratedPack.sourceUrl,
+            spritesheetUrl: activeGeneratedPack.spritesheetUrl,
+            sourceMode: activeGeneratedPack.sourceMode,
+            sourceOrigin: activeGeneratedPack.sourceOrigin,
+            generationMode: activeGeneratedPack.generationMode,
+            sourceImageHash: activeGeneratedPack.sourceImageHash
+          }
+        : activeLofiSource
+          ? {
+              tokenId: activeLofiSource.tokenId,
+              packId: activeLofiVariant?.id ?? "preview-shared-rig",
+              status: activeLofiVariant ? "preview" : "queued",
+              sourceUrl: activeLofiSource.sourceUrl
+            }
+          : undefined,
+      summary: arenaSummary,
+      createdAt: new Date().toISOString()
+    };
+
+    try {
+      const response = await fetch("/api/arena/proof", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(receipt)
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      const payload = (await response.json()) as ArenaProofResponse;
+      setLatestWalrusBlob(payload.blobId);
+      setArenaSnapshot((current) => ({ ...current, phase: "proof_saved" }));
+      setArenaProofMessage(`Arena proof saved: ${payload.blobId} (${payload.storage}).`);
+      addProofEntries([
+        { label: "Arena proof blob", value: payload.blobId },
+        { label: "Arena proof digest", value: payload.digest },
+        { label: "Proof URL", value: payload.proofUrl },
+        { label: "Arena Lofi pack", value: activeGeneratedPack?.packId ?? activeLofiVariant?.id ?? petId },
+        { label: "Arena Lofi source", value: activeGeneratedPack?.sourceOrigin ?? activeLofiSource?.sourceUrl ?? "default-yeti" },
+        { label: "Sui record action", value: isOnChainConfigured() ? arenaOutcomeAction(arenaSummary.outcome) : "ready after package config" }
+      ]);
+      pushMessengerMessage("Walrus Vault", `${activeIdentity} saved arena proof ${payload.blobId}.`);
+    } catch (error) {
+      setArenaProofMessage(error instanceof Error ? error.message : "Could not save arena proof.");
+    } finally {
+      setIsSavingArenaProof(false);
+    }
+  }
+
+  async function uploadPack(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    setUploadMessage("Uploading pet pack proof...");
+    setPetState("waiting");
+
+    const response = await fetch("/api/walrus/upload", {
+      method: "POST",
+      body: data
+    });
+
+    if (!response.ok) {
+      setPetState("failed");
+      setUploadMessage(await response.text());
+      return;
+    }
+
+    const payload = (await response.json()) as { blobId: string; proofUrl: string; storage: string; pet: { id: string; displayName: string } };
+    setPetId(payload.pet.id);
+    setLatestWalrusBlob(payload.blobId);
+    setUploadMessage(`Pack accepted for ${payload.pet.displayName}: ${payload.blobId} (${payload.storage}).`);
+    addProofEntries([
+      { label: "Uploaded animation pack", value: payload.blobId },
+      { label: "Pack proof URL", value: payload.proofUrl },
+      { label: "Latest game action", value: "upload_animation_pack" },
+      { label: "Latest animation state", value: "waiting" }
+    ]);
+    pushMessengerMessage("Walrus Vault", `${activeIdentity} uploaded an animation pack proof for ${payload.pet.displayName}.`);
+  }
+
+  return (
+    <main className="game-room">
+      <section className="game-screen">
+        <div className={`game-world-shell ${worldMode === "arena" ? "arena-world" : "village-world"}`} tabIndex={0} aria-label="PetLofi game world. Use arrow keys to move and E to interact.">
+          <GameCanvas
+            scene={worldMode}
+            petState={petState}
+            petVariant={activeGamePetVariant}
+            petAtlas={activeGamePetAtlas}
+            activeZone={activeVillageZoneId}
+            friends={mapFriends}
+            mapRevision={mapRevision}
+            command={gameCommand}
+            commandNonce={gameCommandNonce}
+            onZoneChange={handleSceneZoneChange}
+            onAction={handleSceneAction}
+            onPetStateChange={setPetState}
+            onCuddleAttack={applyArenaCuddleResult}
+            onArenaTick={handleArenaTick}
+            onArenaComplete={handleArenaComplete}
+          />
+        </div>
+
+        <header className="game-topbar">
+          <div className="game-brand">
+            <div className="brand-mark">
+              <Sparkles size={22} />
+            </div>
+            <div>
+              <h1>PetLofi Village</h1>
+              <p>{activeIdentity}'s Sui-owned work companion</p>
+            </div>
+            <div className="mode-switch" aria-label="World mode">
+              <button className={worldMode === "arena" ? "active" : ""} type="button" onClick={() => setWorldMode("arena")}>
+                Arena
+              </button>
+              <button className={worldMode === "village" ? "active" : ""} type="button" onClick={() => setWorldMode("village")}>
+                Village
+              </button>
+            </div>
+          </div>
+
+          <div className="state-hotbar" aria-label="Animation hotbar">
+            {ANIMATION_MEANINGS.map((meaning, index) => (
+              <button
+                className={`hotbar-button ${petState === meaning.state ? "active" : ""}`}
+                type="button"
+                key={meaning.state}
+                onClick={() => previewAnimation(meaning)}
+                title={meaning.useCase}
+              >
+                <span>{index + 1}</span>
+                {meaning.state}
+              </button>
+            ))}
+          </div>
+
+          <div className="game-wallet">
+            <span className="network-pill">Sui {process.env.NEXT_PUBLIC_SUI_NETWORK ?? "testnet"}</span>
+            {!isOnChainConfigured() && <span className="mode-pill">Local proof</span>}
+            <ConnectButton />
+          </div>
+        </header>
+
+        <aside className="hud-panel identity-hud game-online-hud">
+          <div className="connected-pill">
+            <span />
+            {account?.address ? "connected" : "local mode"}
+          </div>
+          <div className="online-title">
+            <span>ONLINE</span>
+            <strong>{onlineCount}</strong>
+          </div>
+          <ul className="online-list">
+            <li className="active">
+              <span />
+              <strong>{activeIdentity}</strong>
+              <em>Lv {gameState.level}</em>
+            </li>
+            {mapFriends.slice(0, 6).map((friend) => (
+              <li key={friend.id}>
+                <span />
+                {friend.name}
+                <em>{friend.role}</em>
+              </li>
+            ))}
+          </ul>
+          <button className="friend-add-button" type="button" onClick={addMapFriend}>
+            + friend plot
+          </button>
+          <div className="quick-bars">
+            <div><span>XP</span><strong>{gameState.xp}</strong><i style={{ width: `${progress}%` }} /></div>
+            <div><span>Mood</span><strong>{gameState.mood}</strong><i style={{ width: `${gameState.mood}%` }} /></div>
+            <div><span>Energy</span><strong>{gameState.energy}</strong><i style={{ width: `${gameState.energy}%` }} /></div>
+            <div><span>Lofi</span><strong>{account?.address ? walletLofiCount : ownedLofiNfts.length}</strong><i style={{ width: `${Math.min(100, (account?.address ? walletLofiCount : ownedLofiNfts.length) * 20)}%` }} /></div>
+          </div>
+          <div className="quest-chip">
+            Map r{mapRevision} · {mapFriends.length} plots · {completedQuestCount}/{nameQuests.length} SuiNS
+          </div>
+        </aside>
+
+        <button className="gallery-fab" type="button" onClick={() => setIsPetdexOpen(true)}>
+          <Sparkles size={18} />
+          Petdex
+        </button>
+
+        <aside className="hud-panel proof-hud game-chat-hud">
+          <div className="chat-title">
+            <span>CHAT</span>
+            <strong><LinkIcon size={14} /> proof feed</strong>
+          </div>
+          <div className="messenger-log">
+            {messengerMessages.slice(0, 5).map((entry, index) => (
+              <div className="messenger-entry" key={`${entry.speaker}-${entry.message}-${index}`}>
+                <strong>{entry.speaker}</strong>
+                <span>{entry.message}</span>
+              </div>
+            ))}
+          </div>
+          <div className="receipt-stack">
+            <div>
+              <span>Walrus</span>
+              <strong>{latestWalrusBlob || "No proof yet"}</strong>
+            </div>
+            <div>
+              <span>Memory</span>
+              <strong>{gameState.latestMemoryBlob ?? "No memory yet"}</strong>
+            </div>
+            {proofs.slice(0, 2).map((proof) => (
+              <div key={`${proof.label}-${proof.value}`}>
+                <span>{proof.label}</span>
+                <strong>{proof.value}</strong>
+              </div>
+            ))}
+          </div>
+        </aside>
+
+        <div className="install-card">
+          <span>Install this pet</span>
+          <strong>{petName}</strong>
+          {activeLofiSource && (
+            <ActiveLofiSourceCard
+              item={activeLofiSource}
+              feeSui={animationMintFeeSui}
+              variant={activeLofiVariant}
+              pack={activeGeneratedPack}
+            />
+          )}
+          <a className="btn warn" href={activeGeneratedPack?.packageUrl ?? "/api/pets/lofi-yeti/package.zip"}>
+            <Download size={16} />
+            Pet pack
+          </a>
+          <Link href="/demo" className="btn secondary">
+            <Archive size={16} />
+            Demo
+          </Link>
+        </div>
+
+        <div className={`action-dock ${worldMode === "arena" ? "arena-dock" : ""}`}>
+          {worldMode === "arena" ? (
+            <div className="zone-action-card arena-action-card">
+              <div className="arena-title-row">
+                <span className="meaning-state">{arenaRunLabel[arenaSnapshot.phase]}</span>
+                <strong>{arenaSecondsLeft}s</strong>
+              </div>
+              <h3>Cuddle Arena</h3>
+              <p>Survive 60s, collect snacks, dodge enemies, and save the run as proof for this pet.</p>
+              <div className="arena-scoreboard">
+                <div><span>Score</span><strong>{arenaSnapshot.score}</strong></div>
+                <div><span>Snacks</span><strong>{arenaSnapshot.snacksCollected}</strong></div>
+                <div><span>Cleared</span><strong>{arenaSnapshot.enemiesCleared}</strong></div>
+                <div><span>Hits</span><strong>{arenaSnapshot.hitsTaken}</strong></div>
+              </div>
+              <div className="arena-meter-row">
+                <span>Safety</span>
+                <i><b style={{ width: `${Math.min(100, arenaSnapshot.safety)}%` }} /></i>
+                <strong>{arenaSnapshot.safety}%</strong>
+              </div>
+              <div className="button-row">
+                <button className="btn" type="button" onClick={startArenaRun} disabled={arenaSnapshot.phase === "running"}>
+                  <Sparkles size={16} />
+                  Start Run
+                </button>
+                <button className="btn secondary" type="button" onClick={runArenaCuddleAttack} disabled={arenaSnapshot.phase !== "running" || (!arenaSnapshot.cuddleReady && !arenaSnapshot.specialCharged)}>
+                  <Brain size={16} />
+                  {arenaSnapshot.specialCharged ? "Agent Special" : "Cuddle Attack"}
+                </button>
+                <button className="btn secondary" type="button" onClick={() => void runArenaAgentCharge()} disabled={isRunning || arenaSnapshot.phase !== "running"}>
+                  <AlertTriangle size={16} />
+                  Run Agent Charge
+                </button>
+                <button className="btn warn" type="button" onClick={() => void saveArenaProof()} disabled={!arenaSummary || isSavingArenaProof || arenaSnapshot.phase === "proof_saved"}>
+                  <Upload size={16} />
+                  Save Arena Proof
+                </button>
+                <button className="btn secondary" type="button" onClick={resetArenaRun}>
+                  <Archive size={16} />
+                  Replay
+                </button>
+              </div>
+              {(arenaProofMessage || gameActionMessage || mintMessage || memoryMessage) && <p className="summary">{arenaProofMessage || gameActionMessage || mintMessage || memoryMessage}</p>}
+              {arenaSummary && (
+                <small>
+                  {arenaSummary.outcome.toUpperCase()} receipt: {arenaSummary.score} score, {arenaSummary.enemiesCleared} cleared, {arenaSummary.snacksCollected} snacks.
+                </small>
+              )}
+            </div>
+          ) : (
+            <div className="zone-action-card">
+              <span className="meaning-state">{activeVillageZone.label}</span>
+              <h3>{activeVillageZone.title}</h3>
+              <p>{activeVillageZone.detail}</p>
+              <p className="animation-readout">
+                <strong>{activeAnimationMeaning.state}</strong>
+                {activeAnimationMeaning.useCase}
+              </p>
+              {activeVillageZone.id === "agent-forge" && (
+                <label className="field-label compact-prompt">
+                  AI agent task
+                  <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} />
+                </label>
+              )}
+              <div className="button-row">
+                <button className="btn" type="button" onClick={() => void interactWithVillageZone(activeVillageZone)} disabled={isRunning || isMinting}>
+                  <Sparkles size={16} />
+                  {activeVillageZone.action}
+                </button>
+                <button className="btn secondary" type="button" onClick={() => runLocalGameAction("blocked")} disabled={!isMinted}>
+                  <AlertTriangle size={16} />
+                  Mark blocked
+                </button>
+                <button className="btn secondary" type="button" onClick={saveMemory} disabled={!agentResult}>
+                  <Brain size={16} />
+                  Save memory
+                </button>
+              </div>
+              {(gameActionMessage || mintMessage || memoryMessage) && <p className="summary">{gameActionMessage || mintMessage || memoryMessage}</p>}
+            </div>
+          )}
+
+          <div className="dpad" aria-label="Village movement controls">
+            <button
+              className="action-button dpad-up"
+              type="button"
+              onPointerDown={(event) => {
+                event.currentTarget.setPointerCapture(event.pointerId);
+                startDpadHold("up");
+              }}
+              onPointerUp={() => stopDpadHold("up")}
+              onPointerCancel={() => cancelDpadHold("up")}
+              onPointerLeave={() => cancelDpadHold("up")}
+              aria-label="Hold to move up"
+            >
+              <Navigation size={16} />
+            </button>
+            <button
+              className="action-button"
+              type="button"
+              onPointerDown={(event) => {
+                event.currentTarget.setPointerCapture(event.pointerId);
+                startDpadHold("left");
+              }}
+              onPointerUp={() => stopDpadHold("left")}
+              onPointerCancel={() => cancelDpadHold("left")}
+              onPointerLeave={() => cancelDpadHold("left")}
+              aria-label="Hold to move left"
+            >
+              <ArrowLeft size={16} />
+            </button>
+            <button
+              className="action-button"
+              type="button"
+              onPointerDown={(event) => {
+                event.currentTarget.setPointerCapture(event.pointerId);
+                startDpadHold("right");
+              }}
+              onPointerUp={() => stopDpadHold("right")}
+              onPointerCancel={() => cancelDpadHold("right")}
+              onPointerLeave={() => cancelDpadHold("right")}
+              aria-label="Hold to move right"
+            >
+              <ArrowRight size={16} />
+            </button>
+            <button
+              className="action-button dpad-down"
+              type="button"
+              onPointerDown={(event) => {
+                event.currentTarget.setPointerCapture(event.pointerId);
+                startDpadHold("down");
+              }}
+              onPointerUp={() => stopDpadHold("down")}
+              onPointerCancel={() => cancelDpadHold("down")}
+              onPointerLeave={() => cancelDpadHold("down")}
+              aria-label="Hold to move down"
+            >
+              <Navigation size={16} />
+            </button>
+          </div>
+        </div>
+
+        <div className={`timeline-strip ${worldMode === "arena" ? "arena-timeline" : ""}`}>
+          {timeline.map((item, index) => (
+            <div className={`timeline-item ${index < activeStage ? "done" : ""} ${index === activeStage ? "active" : ""}`} key={`${item.label}-${index}`}>
+              <span className="timeline-dot" />
+              <div>
+                <strong>{item.label}</strong>
+                <div>{item.detail}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <form className="upload-form upload-flyout" onSubmit={uploadPack}>
+          <h3>
+            <Upload size={15} /> Upload animation pack
+          </h3>
+          <label className="field-label">
+            pet.json
+            <input type="file" name="petJson" accept=".json,application/json" required />
+          </label>
+          <label className="field-label">
+            spritesheet.webp
+            <input type="file" name="spritesheet" accept=".webp,image/webp" required />
+          </label>
+          <button className="btn secondary" type="submit">
+            Validate + store proof
+          </button>
+          {uploadMessage && <p className="summary">{uploadMessage}</p>}
+        </form>
+      </section>
+
+      {isPetdexOpen && (
+        <div className="petdex-backdrop" role="dialog" aria-modal="true" aria-label="Petdex Gallery">
+          <div className="petdex-modal">
+            <div className="petdex-header">
+              <div>
+                <h2>Petdex Gallery</h2>
+                <p className="panel-copy">
+                  {account?.address
+                    ? `Scanning ${shortAddress(account.address)} for Lofi/Yeti display NFTs.`
+                    : "Connect wallet to scan address-owned Lofi NFTs; demo skins are shown in local mode."}
+                </p>
+              </div>
+              <button className="action-button" type="button" onClick={() => setIsPetdexOpen(false)} aria-label="Close Petdex">
+                <X size={16} />
+                Close
+              </button>
+            </div>
+            <form className="petdex-scan-form" onSubmit={scanOwnerForLofiNfts}>
+              <label>
+                Owner address
+                <input
+                  value={scanAddressInput}
+                  onChange={(event) => setScanAddressInput(event.target.value)}
+                  placeholder="0x... Sui owner address"
+                  spellCheck={false}
+                />
+              </label>
+              <button className="btn" type="submit" disabled={isLoadingLofiNfts}>
+                {isLoadingLofiNfts ? "Scanning..." : "Scan address"}
+              </button>
+              {account?.address && (
+                <button className="btn secondary" type="button" onClick={() => setScanAddressInput(account.address)}>
+                  Use wallet
+                </button>
+              )}
+            </form>
+            {scanError && <p className="petdex-scan-error">{scanError}</p>}
+            <div className="petdex-grid">
+              <div className="petdex-card active">
+                <span className="nft-thumb">
+                  <img src="/pets/lofi-yeti/source-logo.png" alt="" />
+                </span>
+                <strong>{petName}</strong>
+                <span>{isMinted ? "Owned companion" : "Template ready"}</span>
+                <small>{isNameEquipped ? `Equipped to ${activeIdentity}` : "Equip it at SuiNS Gate"}</small>
+              </div>
+              {isLoadingLofiNfts && (
+                <div className="petdex-card petdex-empty-card">
+                  <strong>Scanning wallet...</strong>
+                  <span>Reading Sui display objects</span>
+                  <small>Looking for Lofi/Yeti/CLAY metadata on this address.</small>
+                </div>
+              )}
+              {!isLoadingLofiNfts && ownedLofiNfts.length === 0 && (
+                <div className="petdex-card petdex-empty-card">
+                  <strong>No Lofi NFT found</strong>
+                  <span>{shortAddress(owner)}</span>
+                  <small>Add official collection type filters later, or mint/equip the default animated pack.</small>
+                </div>
+              )}
+              {!isLoadingLofiNfts &&
+                ownedLofiNfts.map((nft) => (
+                  <button
+                    className={`petdex-card nft-card ${petId === nft.objectId ? "active" : ""}`}
+                    type="button"
+                    key={nft.objectId}
+                    onClick={() => equipOwnedLofiNft(nft)}
+                  >
+                    <span className="nft-thumb">
+                      {nft.imageUrl ? <img src={nft.imageUrl} alt="" /> : <PetSprite state="idle" scale={0.42} />}
+                    </span>
+                    <strong>{nft.name}</strong>
+                    <span>{nft.source === "wallet" ? "Wallet Lofi NFT" : "Demo Lofi skin"}</span>
+                    <small>{nft.description || nft.type}</small>
+                  </button>
+                ))}
+            </div>
+            <div className="petdex-section">
+              <h3>Address Lofi Scan</h3>
+              <p className="panel-copy petdex-dark-copy">
+                {lastScannedAddress
+                  ? `${ownedLofiNfts.length} Lofi/Yeti-like NFT${ownedLofiNfts.length === 1 ? "" : "s"} matched from ${shortAddress(lastScannedAddress)}. Matching uses display name, description, image URL, and type until the official Lofi collection/package filters are configured.`
+                  : "Local mode shows demo skins. Paste any Sui owner address or connect a wallet to list real Sui objects owned by that address."}
+              </p>
+            </div>
+            <div className="petdex-section lofi-market-section">
+              <div className="petdex-section-header">
+                <div>
+                  <h3>Official Lofi Market Crawl</h3>
+                  <p className="panel-copy petdex-dark-copy">
+                    Crawl TradePort for the Lofi collection, stage the top 10, and equip ready NFT-to-atlas packs. Queued items keep the real portrait plus shared preview rig until their full 8x9 pack is generated.
+                  </p>
+                </div>
+                <div className="market-actions">
+                  <a className="btn secondary compact-link" href={LOFI_TRADEPORT_URL} target="_blank" rel="noreferrer">
+                    TradePort
+                  </a>
+                  <button className="btn" type="button" onClick={() => void loadTradeportTopLofi(true)} disabled={isLoadingMarket}>
+                    {isLoadingMarket ? "Crawling..." : "Crawl top 10"}
+                  </button>
+                  <button className="btn secondary" type="button" onClick={() => void loadGeneratedLofiPacks(activeLofiSource?.tokenId ?? null, true)} disabled={isGeneratingLofiPacks}>
+                    {isGeneratingLofiPacks ? "Reading..." : "Read status"}
+                  </button>
+                  <button className="btn secondary" type="button" onClick={() => void stageGeneratedLofiPacks("batchA", activeLofiSource?.tokenId ?? null, true)} disabled={isGeneratingLofiPacks}>
+                    {isGeneratingLofiPacks ? "Staging..." : "Stage Batch A"}
+                  </button>
+                </div>
+              </div>
+              {lofiGeneratedPacks.length > 0 ? (
+                <div className="animated-roster-callout">
+                  <strong>
+                    {lofiGeneratedPacks.filter(isRealGeneratedPack).length} real ready · {lofiGeneratedPacks.filter((pack) => pack.status === "preview").length} fallback preview · {lofiGeneratedPacks.filter((pack) => pack.status === "queued").length} queued
+                  </strong>
+                  <span>Only real/refined packs equip as unique spritesheets; fallback previews stay visibly temporary until source art resolves.</span>
+                </div>
+              ) : lofiAnimationRoster.length > 0 && (
+                <div className="animated-roster-callout">
+                  <strong>{lofiAnimationRoster.length} shared preview rigs ready</strong>
+                  <span>Click Stage Batch A to turn highest-price, rarest, and selected NFTs into real image-backed packs.</span>
+                </div>
+              )}
+              <div className="market-summary-grid">
+                <div>
+                  <span>Collection</span>
+                  <strong>{lofiMarket?.collection.supply ?? 358} NFTs</strong>
+                </div>
+                <div>
+                  <span>Floor</span>
+                  <strong>{lofiMarket?.collection.floorSui ?? "10"} SUI</strong>
+                </div>
+                <div>
+                  <span>Animation pass</span>
+                  <strong>{animationMintFeeSui} SUI</strong>
+                </div>
+                <div>
+                  <span>Fetched</span>
+                  <strong>{lofiMarket ? new Date(lofiMarket.fetchedAt).toLocaleTimeString() : "Not yet"}</strong>
+                </div>
+              </div>
+              {(marketError || generatedPackError) && <p className="petdex-scan-error inline-error">{marketError || generatedPackError}</p>}
+              <div className="market-tabs" aria-label="Lofi market crawl mode">
+                <button className={marketMode === "price" ? "active" : ""} type="button" onClick={() => setMarketMode("price")}>
+                  <Coins size={14} />
+                  Most expensive
+                </button>
+                <button className={marketMode === "rarity" ? "active" : ""} type="button" onClick={() => setMarketMode("rarity")}>
+                  <Sparkles size={14} />
+                  Rarest ranking
+                </button>
+              </div>
+              <div className="market-grid">
+                {isLoadingMarket && selectedMarketItems.length === 0 && (
+                  <div className="market-empty">
+                    <strong>Crawling TradePort...</strong>
+                    <span>Reading live listings, rarity ranks, owners, prices, and IPFS art.</span>
+                  </div>
+                )}
+                {!isLoadingMarket && selectedMarketItems.length === 0 && (
+                  <div className="market-empty">
+                    <strong>No crawl data yet</strong>
+                    <span>Press Crawl top 10 to fetch official Lofi NFTs from TradePort.</span>
+                  </div>
+                )}
+                {selectedMarketItems.map((item, index) => {
+                  const isOwnedByCurrentWallet = Boolean(
+                    account?.address && item.owner && item.owner.toLowerCase() === account.address.toLowerCase()
+                  );
+                  const priceText = item.priceSui ? `${item.priceSui} SUI` : "Not listed";
+                  const variant = lofiAnimationRoster.find((candidate) => candidate.tokenId === item.tokenId);
+                  const pack = lofiGeneratedPacks.find((candidate) => candidate.tokenId === item.tokenId);
+
+                  return (
+                    <button
+                      className={`market-card ${activeLofiVariant?.tokenId === item.tokenId || activeGeneratedPack?.tokenId === item.tokenId ? "active" : ""}`}
+                      type="button"
+                      key={`${marketMode}-${item.id}`}
+                      onClick={() => void requestAnimationMintPass(item)}
+                    >
+                      <span className="market-rank">#{index + 1}</span>
+                      <MarketLofiThumb imageUrl={item.imageUrl} variant={variant} pack={pack} />
+                      <strong>{item.name}</strong>
+                      <span className={`pack-status ${packStatusClass(pack, variant)}`}>
+                        {pack ? generatedPackLabel(pack) : variant ? "Preview fallback" : "Queued"}
+                      </span>
+                      <span className="market-line">
+                        <b>Rank</b>
+                        {item.ranking ? `#${item.ranking}` : "unknown"}
+                      </span>
+                      <span className="market-line">
+                        <b>{marketMode === "price" ? "Price" : "List"}</b>
+                        {priceText}
+                      </span>
+                      <span className="market-line">
+                        <b>Owner</b>
+                        {shortObjectId(item.owner)}
+                      </span>
+                      <small>
+                        {pack && isRealGeneratedPack(pack)
+                          ? pack.generationMode === "hatch-refined"
+                            ? "Refined 8x9 atlas ready: click to equip"
+                            : "Real 8x9 atlas ready: click to equip"
+                          : pack?.status === "preview"
+                            ? "Fallback preview only: click stages selected NFT"
+                          : pack?.status === "queued"
+                            ? "Queued: click to stage selected NFT"
+                            : variant
+                              ? "Shared preview rig: click to preview"
+                              : isOwnedByCurrentWallet
+                                ? "Owned by wallet: equip/generate"
+                                : `${animationMintFeeSui} SUI pass to animate`}
+                      </small>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="petdex-section">
+              <h3>Animation Meaning</h3>
+              <div className="petdex-meaning-grid">
+                {ANIMATION_MEANINGS.map((meaning, index) => (
+                  <button
+                    className={`petdex-meaning-card ${petState === meaning.state ? "active" : ""}`}
+                    type="button"
+                    key={meaning.state}
+                    onClick={() => previewAnimation(meaning)}
+                  >
+                    <span>{index + 1}</span>
+                    <strong>{meaning.state}</strong>
+                    <small>{meaning.useCase}</small>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </main>
+  );
+}
+
+function mergeProofEntries(current: ProofEntry[], entries: ProofEntry[]): ProofEntry[] {
+  const labels = new Set(entries.map((entry) => entry.label));
+  return [...entries, ...current.filter((entry) => !labels.has(entry.label))];
+}
+
+async function loadOwnedLofiObjects(suiClient: SuiObjectScanner, ownerAddress: string) {
+  const objects: unknown[] = [];
+  let cursor: string | null | undefined;
+
+  for (let page = 0; page < OWNED_OBJECT_MAX_PAGES; page += 1) {
+    const response = await suiClient.getOwnedObjects({
+      owner: ownerAddress,
+      cursor,
+      limit: OWNED_OBJECT_PAGE_LIMIT,
+      options: {
+        showContent: true,
+        showDisplay: true,
+        showType: true
+      }
+    });
+
+    objects.push(...response.data);
+
+    if (!response.hasNextPage || !response.nextCursor) {
+      break;
+    }
+
+    cursor = response.nextCursor;
+  }
+
+  return {
+    objectCount: objects.length,
+    lofiNfts: extractOwnedLofiNfts(objects)
+  };
+}
+
+function extractOwnedLofiNfts(objects: unknown[]): OwnedLofiNft[] {
+  const seen = new Set<string>();
+  return objects
+    .map(ownedObjectToLofiNft)
+    .filter((nft): nft is OwnedLofiNft => Boolean(nft))
+    .filter((nft) => {
+      if (seen.has(nft.objectId)) {
+        return false;
+      }
+
+      seen.add(nft.objectId);
+      return true;
+    });
+}
+
+function ownedObjectToLofiNft(object: unknown): OwnedLofiNft | null {
+  const objectRecord = asRecord(object);
+  const data = asRecord(objectRecord?.data);
+  const display = asRecord(asRecord(data?.display)?.data);
+  const content = asRecord(data?.content);
+  const contentFields = asRecord(content?.fields);
+  const nestedMetadata = asRecord(contentFields?.metadata);
+
+  const objectId = readString(data, "objectId") ?? "";
+  const type = readString(data, "type") ?? readString(content, "type") ?? "";
+  const name =
+    readString(display, "name") ??
+    readString(contentFields, "name") ??
+    readString(nestedMetadata, "name") ??
+    shortAddress(objectId || type || "unknown");
+  const description =
+    readString(display, "description") ??
+    readString(contentFields, "description") ??
+    readString(nestedMetadata, "description") ??
+    type;
+  const imageUrl = normalizeNftImageUrl(
+    readString(display, "image_url") ??
+      readString(display, "image") ??
+      readString(display, "url") ??
+      readString(contentFields, "image_url") ??
+      readString(contentFields, "image") ??
+      readString(contentFields, "url") ??
+      readString(nestedMetadata, "image_url") ??
+      readString(nestedMetadata, "image") ??
+      ""
+  );
+
+  const haystack = `${name} ${description} ${imageUrl} ${type}`.toLowerCase();
+  const matchesKeyword = LOFI_NFT_KEYWORDS.some((keyword) => haystack.includes(keyword));
+  const matchesType = LOFI_NFT_TYPE_FILTERS.some((filter) => type.toLowerCase().includes(filter));
+
+  if (!objectId || (!matchesKeyword && !matchesType)) {
+    return null;
+  }
+
+  return {
+    objectId,
+    type,
+    name,
+    description,
+    imageUrl,
+    source: "wallet"
+  };
+}
+
+function MarketLofiThumb({
+  imageUrl,
+  variant,
+  pack
+}: {
+  imageUrl: string;
+  variant?: LofiAnimationVariant | null;
+  pack?: LofiGeneratedPetPack | null;
+}) {
+  const [isLoaded, setIsLoaded] = useState(false);
+  const readySrc = pack && isRealGeneratedPack(pack) ? pack.spritesheetUrl : undefined;
+  const previewSrc = pack?.status === "preview" ? pack.spritesheetUrl : undefined;
+  const isFallbackAtlas = pack?.status === "preview";
+  const spriteSrc = readySrc ?? previewSrc;
+
+  return (
+    <span
+      className={`market-thumb ${variant || spriteSrc ? "has-animation" : ""} ${readySrc ? "has-ready-atlas" : ""} ${
+        isFallbackAtlas ? "has-fallback-atlas" : ""
+      }`}
+    >
+      <span className="market-fallback">
+        <PetSprite state={spriteSrc || variant ? "waving" : "idle"} src={spriteSrc} scale={0.34} hue={spriteSrc ? 0 : variant?.hue ?? 0} />
+      </span>
+      {imageUrl && (
+        <img
+          className={isLoaded ? "loaded" : ""}
+          src={imageUrl}
+          alt=""
+          onLoad={() => setIsLoaded(true)}
+          onError={() => setIsLoaded(false)}
+        />
+      )}
+      {spriteSrc ? (
+        <span className={`market-rig-preview ${readySrc ? "ready" : "preview"} ${isFallbackAtlas ? "fallback" : ""}`}>
+          <PetSprite state="running" src={spriteSrc} scale={0.22} />
+        </span>
+      ) : variant && (
+        <span className="market-rig-preview">
+          <PetSprite state="running" scale={0.22} hue={variant.hue} />
+        </span>
+      )}
+    </span>
+  );
+}
+
+function ActiveLofiSourceCard({
+  item,
+  feeSui,
+  variant,
+  pack
+}: {
+  item: TradeportLofiItem;
+  feeSui: string;
+  variant?: LofiAnimationVariant | null;
+  pack?: LofiGeneratedPetPack | null;
+}) {
+  const listingCopy = item.priceSui ? `listed ${item.priceSui} SUI · ` : "";
+
+  return (
+    <div className="active-lofi-source">
+      <MarketLofiThumb imageUrl={item.imageUrl} variant={variant} pack={pack} />
+      <div>
+        <span>
+          {pack && isRealGeneratedPack(pack)
+            ? pack.generationMode === "hatch-refined"
+              ? "Active refined atlas"
+              : "Active real atlas"
+            : pack?.status === "preview"
+              ? "Preview fallback"
+            : variant
+              ? "Active preview"
+              : "Animation source"}
+        </span>
+        <strong>{item.name}</strong>
+        <small>
+          rank {item.ranking ? `#${item.ranking}` : "unknown"} · {listingCopy}
+          {pack && isRealGeneratedPack(pack)
+            ? `${pack.generationMode === "hatch-refined" ? "hatch-refined" : "NFT-to-atlas"} equipped`
+            : pack?.status === "preview"
+              ? "fallback preview only"
+            : variant
+              ? "shared preview rig"
+              : `pass ${feeSui} SUI`}
+        </small>
+      </div>
+    </div>
+  );
+}
+
+function generatedPackLabel(pack: LofiGeneratedPetPack) {
+  if (isRealGeneratedPack(pack)) {
+    return pack.generationMode === "hatch-refined" ? "Ready refined" : "Ready real";
+  }
+
+  if (pack.status === "preview") {
+    return "Preview fallback";
+  }
+
+  return "Queued";
+}
+
+function packStatusClass(pack?: LofiGeneratedPetPack | null, variant?: LofiAnimationVariant | null) {
+  if (pack && isRealGeneratedPack(pack)) {
+    return "ready";
+  }
+
+  if (pack?.status === "preview" || variant) {
+    return "preview";
+  }
+
+  return "queued";
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+function readString(record: Record<string, unknown> | null | undefined, key: string): string | null {
+  const value = record?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeNftImageUrl(url: string): string {
+  if (!url) {
+    return "";
+  }
+
+  if (url.startsWith("ipfs://")) {
+    return `https://ipfs.io/ipfs/${url.slice("ipfs://".length)}`;
+  }
+
+  if (url.startsWith("ar://")) {
+    return `https://arweave.net/${url.slice("ar://".length)}`;
+  }
+
+  return url;
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}

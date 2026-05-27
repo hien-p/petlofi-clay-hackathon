@@ -1,0 +1,28 @@
+{
+  "id": "lofi-nfts-141-f7fcfd78",
+  "displayName": "Lofi NFTs #141",
+  "description": "Lofi NFTs #141 fallback preview atlas staged from token metadata because source NFT art was unavailable.",
+  "spritesheetPath": "spritesheet.webp",
+  "referenceUrl": "https://www.tradeport.xyz/sui/collection/0x559c9c8867b5f9d82676ea1ee3d0c6d13338a77df6cd9194ff91bb6f75cafa69?bottomTab=trades&tab=items&modal=nft-4a4163c4-143a-4f67-bdf4-2b667c6ce7cd",
+  "sourceImageUrl": "https://ipfs.io/ipfs/QmYfKVojEZ2eMxsCr3s7MdH4XbqYgTKGYnFYAiTZR8DANV",
+  "sourceTokenId": "0x98f1b5afbb89def1de77c3226c218bb330a67fc917b035f067726844c2bf250e",
+  "sourceOrigin": "metadata-fallback",
+  "sourceMode": "metadata-fallback",
+  "sourceImageHash": "e26677295c8e643477603ee513d66aaa7b14664f8857a3520a933f0834e98e7d",
+  "generationMode": "deterministic",
+  "hatchRun": "petlofi-top10-staged",
+  "packHash": "41a7536821ffb48d0dd1fa1c54427f8cc6c5137f424ad76a9d788c1495276ecf",
+  "warning": "NFT source image unavailable across configured gateways; generated fallback preview only.",
+  "lastGeneratedAt": "2026-05-27T02:53:48.510Z",
+  "states": [
+    "idle",
+    "running-right",
+    "running-left",
+    "waving",
+    "jumping",
+    "failed",
+    "waiting",
+    "running",
+    "review"
+  ]
+}

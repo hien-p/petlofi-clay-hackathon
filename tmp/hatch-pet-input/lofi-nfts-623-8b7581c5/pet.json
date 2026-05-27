@@ -1,0 +1,24 @@
+{
+  "id": "lofi-nfts-623-8b7581c5",
+  "displayName": "Lofi NFTs #623",
+  "description": "Lofi NFTs #623 staged NFT-to-atlas companion generated from official Lofi NFT source art for PetLofi Cuddle Arena.",
+  "spritesheetPath": "spritesheet.webp",
+  "referenceUrl": "https://www.tradeport.xyz/sui/collection/0x559c9c8867b5f9d82676ea1ee3d0c6d13338a77df6cd9194ff91bb6f75cafa69?bottomTab=trades&tab=items&modal=nft-6bd78b0d-2f05-4fe3-a20f-b01d6571a378",
+  "sourceImageUrl": "https://ipfs.io/ipfs/QmTZRLHUeNafDfTPWz8RQSkB9U4KGiarDrowMiwUZQQzDd",
+  "sourceTokenId": "0x60a9ca1697f4ca0c04b54b59a6f232298c20c2b456059c406b16995d03bd6953",
+  "sourceMode": "metadata-fallback",
+  "sourceNote": "NFT source image unavailable; staged from token metadata fallback (source image unavailable (ipfs.io:This operation was aborted, w3s.link:This operation was aborted, cloudflare-ipfs.com:fetch failed, gateway.pinata.cloud:This operation was aborted, dweb.link:This operation was aborted, nftstorage.link:This operation was aborted, trustless-gateway.link:trustless-gateway.link:406, gateway.lighthouse.storage:gateway.lighthouse.storage:402))",
+  "generationMode": "staged-nft-to-atlas",
+  "hatchRun": "petlofi-top10-staged",
+  "states": [
+    "idle",
+    "running-right",
+    "running-left",
+    "waving",
+    "jumping",
+    "failed",
+    "waiting",
+    "running",
+    "review"
+  ]
+}

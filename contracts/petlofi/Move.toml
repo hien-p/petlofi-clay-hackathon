@@ -1,0 +1,5 @@
+[package]
+name = "petlofi"
+edition = "2024"
+
+[dependencies]
