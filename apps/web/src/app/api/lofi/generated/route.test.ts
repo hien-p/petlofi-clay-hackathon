@@ -1,40 +1,20 @@
-import { promises as fs } from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import JSZip from "jszip";
 import sharp from "sharp";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { LofiGeneratedResponse } from "@/lib/lofiGenerated";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { lofiGeneratedPackId, type LofiGeneratedResponse } from "@/lib/lofiGenerated";
 import type { TradeportLofiItem, TradeportLofiTopResponse } from "@/lib/lofiMarket";
-import { validateSpriteAtlas } from "@/lib/petPack";
-import { GET as getPackageZip } from "../../pets/[id]/package.zip/route";
+import { PET_STATES } from "@/lib/petPack";
 import { GET, POST } from "./route";
 
 const baseDate = "2026-05-26T00:00:00.000Z";
 
 describe("generated Lofi atlas API", () => {
-  let petsDir: string;
-  let previousPetsDir: string | undefined;
-
-  beforeEach(async () => {
-    previousPetsDir = process.env.PETLOFI_PETS_DIR;
-    petsDir = await fs.mkdtemp(path.join(os.tmpdir(), "petlofi-pets-"));
-    process.env.PETLOFI_PETS_DIR = petsDir;
-  });
-
-  afterEach(async () => {
+  afterEach(() => {
     vi.unstubAllGlobals();
-    if (previousPetsDir === undefined) {
-      delete process.env.PETLOFI_PETS_DIR;
-    } else {
-      process.env.PETLOFI_PETS_DIR = previousPetsDir;
-    }
-    await fs.rm(petsDir, { recursive: true, force: true });
   });
 
   it("keeps GET read-only and returns queued top-10 status", async () => {
     const top = makeTopResponse();
-    stubFetch(top, await makePng(), { imageMode: "success" });
+    stubFetch(top);
 
     const response = await GET(new Request("http://localhost/api/lofi/generated"));
     const body = (await response.json()) as LofiGeneratedResponse;
@@ -44,66 +24,45 @@ describe("generated Lofi atlas API", () => {
     expect(body.readyCount).toBe(0);
     expect(body.previewCount).toBe(0);
     expect(body.queuedCount).toBe(10);
-    await expect(fs.readdir(petsDir)).resolves.toHaveLength(0);
   });
 
-  it("generates a selected real-image atlas, then prefers the cached source image", async () => {
+  it("surfaces pre-generated public packs as real atlas status", async () => {
     const top = makeTopResponse();
-    stubFetch(top, await makePng("#8cf6d4"), { imageMode: "success" });
+    const packId = lofiGeneratedPackId(top.mostExpensive[0]);
+    stubFetch(top, {
+      [packId]: {
+        petJson: makeStoredPetJson(packId, "local-cache"),
+        spritesheet: await makeAtlasWebp()
+      }
+    });
 
-    const firstResponse = await POST(
-      new Request("http://localhost/api/lofi/generated", {
-        method: "POST",
-        body: JSON.stringify({ mode: "selected", selectedTokenId: "0xlofi1" })
-      })
-    );
-    const firstBody = (await firstResponse.json()) as LofiGeneratedResponse;
-    const firstPack = firstBody.packs.find((pack) => pack.tokenId === "0xlofi1");
+    const response = await GET(new Request("http://localhost/api/lofi/generated?selected=0xlofi1"));
+    const body = (await response.json()) as LofiGeneratedResponse;
+    const pack = body.packs.find((candidate) => candidate.tokenId === "0xlofi1");
 
-    expect(firstPack).toMatchObject({
+    expect(body.readyCount).toBe(1);
+    expect(body.previewCount).toBe(0);
+    expect(pack).toMatchObject({
       status: "ready",
-      sourceOrigin: "tradeport-media",
+      sourceOrigin: "local-cache",
+      sourceMode: "nft-image",
       generationMode: "deterministic"
     });
-    expect(firstBody.readyCount).toBe(1);
-    expect(firstBody.previewCount).toBe(0);
-    expect(firstPack?.sourceImageHash).toMatch(/^[a-f0-9]{64}$/);
-    expect(firstPack?.packHash).toMatch(/^[a-f0-9]{64}$/);
-
-    const packDir = path.join(petsDir, firstPack?.packId ?? "");
-    validateSpriteAtlas(await fs.readFile(path.join(packDir, "spritesheet.webp")));
-    await expect(fs.readFile(path.join(packDir, "source-image.png"))).resolves.toBeInstanceOf(Buffer);
-
-    const zipResponse = await getPackageZip(new Request("http://localhost/api/pets/package.zip"), {
-      params: Promise.resolve({ id: firstPack?.packId ?? "" })
-    });
-    const zip = await JSZip.loadAsync(Buffer.from(await zipResponse.arrayBuffer()));
-    expect(zip.file("pet.json")).toBeTruthy();
-    expect(zip.file("spritesheet.webp")).toBeTruthy();
-    expect(zip.file("contact-sheet.webp")).toBeTruthy();
-
-    stubFetch(top, await makePng("#000000"), { imageMode: "fail" });
-    const cachedResponse = await POST(
-      new Request("http://localhost/api/lofi/generated", {
-        method: "POST",
-        body: JSON.stringify({ mode: "selected", selectedTokenId: "0xlofi1" })
-      })
-    );
-    const cachedBody = (await cachedResponse.json()) as LofiGeneratedResponse;
-    const cachedPack = cachedBody.packs.find((pack) => pack.tokenId === "0xlofi1");
-    expect(cachedPack).toMatchObject({ status: "ready", sourceOrigin: "local-cache" });
+    expect(pack?.packHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(pack?.sourceImageHash).toBe("a".repeat(64));
   });
 
-  it("keeps unreachable NFT art as a preview fallback instead of real ready", async () => {
+  it("keeps pre-generated metadata fallbacks separate from real ready packs", async () => {
     const top = makeTopResponse({ imageUrl: "ipfs://missing-art" });
-    stubFetch(top, await makePng(), { imageMode: "fail" });
+    const packId = lofiGeneratedPackId(top.mostExpensive[0]);
+    stubFetch(top, {
+      [packId]: {
+        petJson: makeStoredPetJson(packId, "metadata-fallback"),
+        spritesheet: await makeAtlasWebp()
+      }
+    });
 
-    const response = await POST(
-      new Request("http://localhost/api/lofi/generated", {
-        method: "POST",
-        body: JSON.stringify({ mode: "selected", selectedTokenId: "0xlofi1" })
-      })
-    );
+    const response = await GET(new Request("http://localhost/api/lofi/generated?selected=0xlofi1"));
     const body = (await response.json()) as LofiGeneratedResponse;
     const pack = body.packs.find((candidate) => candidate.tokenId === "0xlofi1");
 
@@ -115,15 +74,21 @@ describe("generated Lofi atlas API", () => {
       sourceMode: "metadata-fallback"
     });
     expect(pack?.warning).toContain("fallback preview");
-    await expect(fs.readFile(path.join(petsDir, pack?.packId ?? "", "source-fallback.png"))).resolves.toBeInstanceOf(Buffer);
+  });
+
+  it("returns an explicit disabled response for runtime generation", async () => {
+    const response = await POST();
+    const body = (await response.json()) as LofiGeneratedResponse;
+
+    expect(response.status).toBe(501);
+    expect(body.readyCount).toBe(0);
+    expect(body.previewCount).toBe(0);
+    expect(body.queuedCount).toBe(0);
+    expect(body.warning).toContain("On-demand pack generation is disabled");
   });
 });
 
-function stubFetch(
-  top: TradeportLofiTopResponse,
-  image: Buffer,
-  options: { imageMode: "success" | "fail" }
-) {
+function stubFetch(top: TradeportLofiTopResponse, packs: Record<string, { petJson: Record<string, unknown>; spritesheet: Buffer }> = {}) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
@@ -131,25 +96,52 @@ function stubFetch(
       if (url.includes("/api/lofi/top")) {
         return Response.json(top);
       }
-      if (options.imageMode === "success" && url.startsWith("https://example.com/")) {
-        return new Response(new Uint8Array(image), { headers: { "content-type": "image/png" } });
+      const petJsonMatch = /\/pets\/([^/]+)\/pet\.json/.exec(url);
+      if (petJsonMatch) {
+        const pack = packs[petJsonMatch[1]];
+        return pack ? Response.json(pack.petJson) : new Response("not found", { status: 404 });
+      }
+      const spritesheetMatch = /\/pets\/([^/]+)\/spritesheet\.webp/.exec(url);
+      if (spritesheetMatch) {
+        const pack = packs[spritesheetMatch[1]];
+        return pack
+          ? new Response(new Uint8Array(pack.spritesheet), { headers: { "content-type": "image/webp" } })
+          : new Response("not found", { status: 404 });
       }
       return new Response("not found", { status: 404 });
     })
   );
 }
 
-async function makePng(color = "#93f5c8") {
+async function makeAtlasWebp() {
   return sharp({
     create: {
-      width: 128,
-      height: 128,
+      width: 1536,
+      height: 1872,
       channels: 4,
-      background: color
+      background: "#00000000"
     }
   })
-    .png()
+    .webp()
     .toBuffer();
+}
+
+function makeStoredPetJson(packId: string, sourceOrigin: "local-cache" | "metadata-fallback") {
+  return {
+    id: packId,
+    displayName: "Lofi NFTs #1",
+    description:
+      sourceOrigin === "metadata-fallback"
+        ? "Fallback preview atlas staged from metadata because source NFT art was unavailable."
+        : "Real image-backed deterministic 8x9 atlas for PetLofi.",
+    spritesheetPath: "spritesheet.webp",
+    sourceOrigin,
+    sourceMode: sourceOrigin === "metadata-fallback" ? "metadata-fallback" : "nft-image",
+    sourceImageHash: "a".repeat(64),
+    generationMode: "deterministic",
+    lastGeneratedAt: baseDate,
+    states: PET_STATES
+  };
 }
 
 function makeTopResponse(overrides: Partial<TradeportLofiItem> = {}): TradeportLofiTopResponse {
