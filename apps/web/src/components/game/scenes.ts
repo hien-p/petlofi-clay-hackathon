@@ -65,6 +65,8 @@ export function createPetLofiScenes(PhaserLib: PhaserRuntime) {
     protected moveVector = { dx: 0, dy: 0 };
     protected continuousMoveActive = false;
     protected lastContinuousActionAt = 0;
+    protected velX = 0;
+    protected velY = 0;
     protected petVariant: GamePetVariant | null = null;
     protected petAtlas: GamePetAtlas | null = null;
     protected activePetTexture = PET_TEXTURE;
@@ -115,8 +117,9 @@ export function createPetLofiScenes(PhaserLib: PhaserRuntime) {
 
       const shadow = this.add.ellipse(0, 13, 92, 27, 0x062b33, 0.24);
       this.pet = this.add.sprite(0, 0, this.activePetTexture).setOrigin(0.5, 0.82).setScale(scale);
+      const petHeadTop = -208 * 0.82 * scale;
       const name = this.add
-        .text(0, -118 * scale, "@clay-builder", {
+        .text(0, petHeadTop - Math.max(8, 12 * scale), "@clay-builder", {
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
           fontSize: `${Math.max(16, Math.round(25 * scale))}px`,
           color: "#93f5c8",
@@ -125,12 +128,12 @@ export function createPetLofiScenes(PhaserLib: PhaserRuntime) {
           stroke: "#031017",
           strokeThickness: 4
         })
-        .setOrigin(0.5);
+        .setOrigin(0.5, 1);
 
       this.petRoot.add([shadow, this.pet, name]);
       this.petRoot.setSize(140, 160);
       this.petRoot.setInteractive(
-        new PhaserLib.Geom.Rectangle(-70, -128, 140, 170),
+        new PhaserLib.Geom.Rectangle(-70, petHeadTop - 50, 140, Math.abs(petHeadTop) + 92),
         PhaserLib.Geom.Rectangle.Contains
       );
       this.petRoot.on("pointerdown", () => this.onPetPressed());
@@ -344,19 +347,34 @@ export function createPetLofiScenes(PhaserLib: PhaserRuntime) {
     }
 
     protected updateContinuousMovement(time: number, delta: number, action: string) {
-      if (!this.petRoot || !this.continuousMoveActive) {
+      if (!this.petRoot) {
         return;
       }
 
       const speed = this.continuousMoveSpeed();
+      const targetVX = this.continuousMoveActive ? this.moveVector.dx * speed.x : 0;
+      const targetVY = this.continuousMoveActive ? this.moveVector.dy * speed.y : 0;
+
+      // Exponential smoothing so accel/decel feel like gliding instead of snapping.
+      const k = 1 - Math.exp(-(delta / 1000) * 16);
+      this.velX += (targetVX - this.velX) * k;
+      this.velY += (targetVY - this.velY) * k;
+
+      // Idle: not holding and basically stopped — clamp to rest and skip.
+      if (!this.continuousMoveActive && Math.hypot(this.velX, this.velY) < 4) {
+        this.velX = 0;
+        this.velY = 0;
+        return;
+      }
+
       const next = this.boundedPoint(
-        this.petRoot.x + this.moveVector.dx * speed.x * (delta / 1000),
-        this.petRoot.y + this.moveVector.dy * speed.y * (delta / 1000)
+        this.petRoot.x + this.velX * (delta / 1000),
+        this.petRoot.y + this.velY * (delta / 1000)
       );
       this.petRoot.setPosition(next.x, next.y);
       this.syncPetDepth();
 
-      if (time - this.lastContinuousActionAt > 280) {
+      if (this.continuousMoveActive && time - this.lastContinuousActionAt > 280) {
         this.emitAction(action);
         this.lastContinuousActionAt = time;
       }
@@ -498,7 +516,7 @@ export function createPetLofiScenes(PhaserLib: PhaserRuntime) {
       this.installCommandBridge();
       this.drawStaticArena();
       this.motion = this.add.graphics().setDepth(3);
-      const petPoint = this.pct(19, 47);
+      const petPoint = this.pct(20, 48);
       this.createPet(petPoint.x, petPoint.y, this.petScale(0.72));
       this.petRoot?.setDepth(80);
       this.createLockedCompanions();
@@ -506,7 +524,13 @@ export function createPetLofiScenes(PhaserLib: PhaserRuntime) {
       this.createSnacks();
       this.createArenaCopy();
       this.input.keyboard?.on("keydown-SPACE", () => this.cuddleAttack());
-      this.scale.once("resize", () => this.scene.restart());
+      // Only rebuild the scene on resize when a run isn't in progress, so resizing
+      // (or opening devtools) never wipes an active Cuddle Arena run.
+      this.scale.on("resize", () => {
+        if (this.arenaSnapshot?.phase !== "running") {
+          this.scene.restart();
+        }
+      });
     }
 
     update(time: number, delta: number) {
@@ -639,6 +663,10 @@ export function createPetLofiScenes(PhaserLib: PhaserRuntime) {
       this.callbacks().onCuddleAttack?.();
       this.emitAction(isSpecial ? "arena_agent_special" : "arena_cuddle_attack");
       this.createBurst(this.petRoot.x, this.petRoot.y - 52, isSpecial ? 1.55 : 1);
+      if (cleared > 0 || isSpecial) {
+        this.cameras.main.shake(isSpecial ? 320 : 150, isSpecial ? 0.012 : 0.006);
+        this.cameras.main.flash(isSpecial ? 220 : 120, 147, 245, 200, false);
+      }
       this.emitArenaTick();
       this.time.delayedCall(720, () => {
         if (this.arenaSnapshot.phase === "running") {
@@ -722,6 +750,7 @@ export function createPetLofiScenes(PhaserLib: PhaserRuntime) {
           this.setPetState("failed");
           this.trackArenaState("failed");
           this.createHitFlash(this.petRoot!.x, this.petRoot!.y - 44);
+          this.cameras.main.shake(170, 0.009);
           this.time.delayedCall(360, () => {
             if (this.arenaSnapshot.phase === "running") {
               this.setPetState("running");
@@ -931,15 +960,20 @@ export function createPetLofiScenes(PhaserLib: PhaserRuntime) {
       g.fillStyle(0x083941, 1);
       g.fillRect(0, 0, width, height);
       g.fillStyle(0x0d736c, 1);
-      g.fillRoundedRect(width * 0.08, height * 0.15, width * 0.84, height * 0.72, 54);
+      g.fillRoundedRect(width * 0.055, height * 0.13, width * 0.89, height * 0.74, 58);
       g.fillStyle(0xbce7b2, 1);
-      g.fillRoundedRect(width * 0.12, height * 0.2, width * 0.76, height * 0.62, 44);
-      g.lineStyle(7, 0x0f8475, 0.5);
-      g.strokeRoundedRect(width * 0.14, height * 0.23, width * 0.72, height * 0.56, 34);
+      g.fillRoundedRect(width * 0.1, height * 0.18, width * 0.8, height * 0.62, 42);
+      g.lineStyle(8, 0x0f8475, 0.42);
+      g.strokeRoundedRect(width * 0.115, height * 0.2, width * 0.77, height * 0.58, 34);
+      g.lineStyle(2, 0x062b33, 0.12);
+      for (let lane = 0; lane < 5; lane += 1) {
+        const y = height * (0.28 + lane * 0.1);
+        g.lineBetween(width * 0.14, y, width * 0.86, y + Math.sin(lane) * 10);
+      }
 
       for (let i = 0; i < 160; i += 1) {
-        const x = width * 0.13 + ((i * 83) % Math.round(width * 0.73));
-        const y = height * 0.23 + ((i * 47) % Math.round(height * 0.54));
+        const x = width * 0.12 + ((i * 83) % Math.round(width * 0.76));
+        const y = height * 0.21 + ((i * 47) % Math.round(height * 0.56));
         const grass = this.add.graphics().setDepth(1);
         grass.lineStyle(4, i % 3 === 0 ? 0x42c68f : 0x169c86, 0.46);
         grass.lineBetween(x, y, x, y + 13);
@@ -947,26 +981,27 @@ export function createPetLofiScenes(PhaserLib: PhaserRuntime) {
       }
 
       this.add
-        .text(width * 0.5, height * 0.215, "~CHOOSE YOUR LOFI~", {
+        .text(width * 0.5, height * 0.17, "CUDDLE ARENA", {
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-          fontSize: `${Math.max(30, Math.round(width * 0.027))}px`,
-          fontStyle: "900",
-          color: "#f8fff1",
-          stroke: "#062b33",
-          strokeThickness: 8
-        })
-        .setOrigin(0.5)
-        .setDepth(5);
-
-      this.add
-        .text(width * 0.78, height * 0.22, "Held ◆ 0", {
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-          fontSize: `${Math.max(20, Math.round(width * 0.018))}px`,
+          fontSize: `${Math.max(22, Math.round(width * 0.018))}px`,
           fontStyle: "900",
           color: "#f8fff1",
           stroke: "#062b33",
           strokeThickness: 6
         })
+        .setOrigin(0.5)
+        .setDepth(5);
+
+      this.add
+        .text(width * 0.79, height * 0.18, "60s  ◆  Proof Run", {
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+          fontSize: `${Math.max(13, Math.round(width * 0.009))}px`,
+          fontStyle: "900",
+          color: "#f4c95d",
+          stroke: "#062b33",
+          strokeThickness: 4
+        })
+        .setOrigin(0.5)
         .setDepth(5);
 
       const home = this.add.graphics().setDepth(6);
@@ -1007,31 +1042,32 @@ export function createPetLofiScenes(PhaserLib: PhaserRuntime) {
 
     private createLockedCompanions() {
       [
-        { x: 40, y: 46, tail: -20 },
-        { x: 58, y: 46, tail: -58 },
-        { x: 76, y: 46, tail: -82 }
+        { x: 42, y: 45, tail: -20 },
+        { x: 58, y: 45, tail: -58 },
+        { x: 74, y: 45, tail: -82 }
       ].forEach((item, index) => {
         const point = this.pct(item.x, item.y);
         const root = this.add.container(point.x, point.y).setDepth(20 + index);
+        const shadow = this.add.ellipse(0, 38, 92, 24, 0x062b33, 0.22);
         const body = this.add.graphics();
-        body.fillStyle(0x062b33, 0.94);
-        body.fillEllipse(0, 9, 122, 78);
-        body.fillEllipse(-8, -34, 80, 58);
-        body.fillTriangle(-44, -48, -28, -86, -7, -47);
-        body.fillTriangle(20, -47, 42, -86, 52, -48);
-        body.fillRoundedRect(52, -2, 62, 18, 9);
+        body.fillStyle(0x062b33, 0.88);
+        body.fillEllipse(0, 7, 84, 54);
+        body.fillEllipse(-6, -25, 55, 40);
+        body.fillTriangle(-31, -35, -20, -62, -5, -34);
+        body.fillTriangle(14, -35, 30, -62, 37, -35);
+        body.fillRoundedRect(35, -2, 43, 13, 7);
         body.setRotation(PhaserLib.Math.DegToRad(item.tail));
         const label = this.add
-          .text(0, 82, "????", {
+          .text(0, 62, "locked", {
             fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-            fontSize: "22px",
+            fontSize: "13px",
             color: "#f8fff1",
             stroke: "#062b33",
-            strokeThickness: 6
+            strokeThickness: 4
           })
           .setOrigin(0.5);
-        root.add([body, label]);
-        root.setSize(160, 160).setInteractive({ cursor: "pointer" });
+        root.add([shadow, body, label]);
+        root.setSize(112, 118).setInteractive({ cursor: "pointer" });
         root.on("pointerdown", () => {
           this.setPetState("waiting");
           this.emitAction("locked_companion_waiting");
@@ -1121,39 +1157,39 @@ export function createPetLofiScenes(PhaserLib: PhaserRuntime) {
       const width = this.scale.width;
       const height = this.scale.height;
       const title = this.add
-        .text(width * 0.5, height * 0.62, "*A Sui-owned Lofi companion*", {
+        .text(width * 0.25, height * 0.72, "Snack + safety", {
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-          fontSize: `${Math.max(20, Math.round(width * 0.017))}px`,
+          fontSize: `${Math.max(12, Math.round(width * 0.008))}px`,
           color: "#f8fff1",
           stroke: "#062b33",
-          strokeThickness: 7
+          strokeThickness: 4
         })
         .setOrigin(0.5)
         .setDepth(8);
       const ability = this.add
-        .text(width * 0.5, height * 0.67, "ABILITY: Cuddle burst records proof in all directions", {
+        .text(width * 0.5, height * 0.72, "Cuddle burst", {
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-          fontSize: `${Math.max(16, Math.round(width * 0.014))}px`,
+          fontSize: `${Math.max(12, Math.round(width * 0.008))}px`,
           fontStyle: "900",
           color: "#ff815e",
           stroke: "#062b33",
-          strokeThickness: 6
+          strokeThickness: 4
         })
         .setOrigin(0.5)
         .setDepth(8);
       const small = this.add
-        .text(width * 0.5, height * 0.72, "Guarded location: Walrus Emerald Arena  (OWNED)", {
+        .text(width * 0.75, height * 0.72, "Walrus receipt", {
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-          fontSize: `${Math.max(14, Math.round(width * 0.012))}px`,
-          color: "#f8fff1",
+          fontSize: `${Math.max(12, Math.round(width * 0.008))}px`,
+          color: "#93f5c8",
           stroke: "#062b33",
-          strokeThickness: 5
+          strokeThickness: 4
         })
         .setOrigin(0.5)
         .setDepth(8);
-      title.setAlpha(0.95);
-      ability.setAlpha(0.95);
-      small.setAlpha(0.95);
+      title.setAlpha(0.62);
+      ability.setAlpha(0.68);
+      small.setAlpha(0.62);
     }
 
     private createBurst(x: number, y: number, scale = 1) {

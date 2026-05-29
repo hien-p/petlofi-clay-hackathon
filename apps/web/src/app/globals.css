@@ -113,6 +113,29 @@ a {
   color: var(--gold);
 }
 
+.hud-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 2px solid var(--line);
+  padding: 8px 10px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.hud-toggle:hover {
+  color: var(--gold);
+  border-color: var(--gold);
+}
+
+.hud-toggle[aria-pressed="true"] {
+  color: var(--gold);
+  border-color: var(--gold);
+}
+
 .game-room {
   min-height: 100vh;
   overflow: hidden;
@@ -2194,8 +2217,13 @@ a {
 .arena-title-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
+}
+
+.arena-title-row h3 {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
 }
 
 .arena-title-row strong {
@@ -2204,6 +2232,31 @@ a {
   color: var(--gold);
   padding: 4px 8px;
   font-size: 13px;
+}
+
+.arena-collapse-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 2px solid rgba(147, 245, 200, 0.32);
+  background: rgba(13, 18, 21, 0.72);
+  color: var(--mint);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.arena-collapse-btn:hover {
+  color: var(--gold);
+  border-color: var(--gold);
+}
+
+/* Collapsed arena dock: narrower, just title + Start Run */
+.arena-dock-collapsed {
+  width: min(440px, calc(100vw - 740px));
+  min-width: 360px;
 }
 
 .arena-scoreboard {
@@ -3468,5 +3521,320 @@ a {
 
   .petdex-meaning-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* Arena gameplay HUD pass: keep the playfield readable and move debug-heavy UI out of the way. */
+@media (min-width: 721px) {
+  .game-screen.is-arena .game-topbar {
+    top: 14px;
+    left: 16px;
+    right: 16px;
+    grid-template-columns: 210px auto auto;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .game-screen.is-arena .game-brand {
+    min-height: 54px;
+    padding: 8px 10px;
+    background: rgba(3, 15, 28, 0.44);
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.22);
+  }
+
+  .game-screen.is-arena .brand-mark {
+    width: 34px;
+    height: 34px;
+  }
+
+  .game-screen.is-arena .game-brand h1 {
+    font-size: 16px;
+  }
+
+  .game-screen.is-arena .game-brand p {
+    display: none;
+  }
+
+  .game-screen.is-arena .mode-switch button {
+    padding: 4px 7px;
+    font-size: 10px;
+  }
+
+  .game-screen.is-arena .game-topbar .state-hotbar {
+    grid-column: auto;
+    grid-row: auto;
+    justify-self: center;
+    width: auto;
+    max-width: 164px;
+    overflow: visible;
+    padding: 5px;
+    background: rgba(3, 15, 28, 0.34);
+  }
+
+  .game-screen.is-arena .hotbar-button:not(.active) {
+    display: none;
+  }
+
+  .game-screen.is-arena .hotbar-button.active {
+    justify-content: center;
+    min-width: 116px;
+    min-height: 28px;
+    padding: 5px 8px;
+    font-size: 12px;
+  }
+
+  .game-screen.is-arena .hotbar-button.active span {
+    width: 18px;
+    height: 16px;
+    font-size: 10px;
+  }
+
+  .game-screen.is-arena .game-wallet {
+    justify-self: end;
+    gap: 6px;
+    padding: 6px;
+    background: rgba(3, 15, 28, 0.44);
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.22);
+  }
+
+  .game-screen.is-arena .network-pill,
+  .game-screen.is-arena .mode-pill {
+    padding: 6px 8px;
+    font-size: 10px;
+  }
+
+  .game-screen.is-arena .game-online-hud {
+    top: 86px;
+    left: 16px;
+    width: 188px;
+    max-height: none;
+    padding: 10px;
+    overflow: hidden;
+    background: rgba(3, 15, 28, 0.36);
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.22);
+  }
+
+  .game-screen.is-arena .connected-pill {
+    padding: 4px 8px;
+    font-size: 10px;
+  }
+
+  .game-screen.is-arena .connected-pill span {
+    width: 7px;
+    height: 7px;
+  }
+
+  .game-screen.is-arena .online-title {
+    margin-top: 8px;
+  }
+
+  .game-screen.is-arena .online-list {
+    gap: 4px;
+    margin-top: 7px;
+  }
+
+  .game-screen.is-arena .online-list li {
+    grid-template-columns: 8px minmax(0, 1fr) auto;
+    gap: 6px;
+    font-size: 11px;
+  }
+
+  .game-screen.is-arena .online-list li:nth-child(n + 5),
+  .game-screen.is-arena .friend-add-button {
+    display: none;
+  }
+
+  .game-screen.is-arena .quick-bars {
+    gap: 5px;
+    margin-top: 8px;
+  }
+
+  .game-screen.is-arena .quick-bars div {
+    grid-template-columns: 40px 28px 1fr;
+    gap: 5px;
+    font-size: 9px;
+  }
+
+  .game-screen.is-arena .quick-bars strong {
+    font-size: 11px;
+  }
+
+  .game-screen.is-arena .quick-bars i {
+    height: 5px;
+  }
+
+  .game-screen.is-arena .quest-chip {
+    margin-top: 8px;
+    padding: 7px;
+    font-size: 10px;
+  }
+
+  .game-screen.is-arena .gallery-fab {
+    top: 72px;
+    right: 16px;
+    padding: 9px 13px;
+    box-shadow: 2px 2px 0 var(--shadow);
+  }
+
+  .game-screen.is-arena .install-card {
+    left: 16px;
+    bottom: 16px;
+    width: 190px;
+    gap: 6px;
+    padding: 10px;
+    background: rgba(3, 15, 28, 0.44);
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.22);
+  }
+
+  .game-screen.is-arena .install-card > span {
+    font-size: 9px;
+  }
+
+  .game-screen.is-arena .install-card strong {
+    font-size: 12px;
+  }
+
+  .game-screen.is-arena .install-card .active-lofi-source {
+    grid-template-columns: 42px minmax(0, 1fr);
+    gap: 7px;
+    padding: 6px;
+  }
+
+  .game-screen.is-arena .install-card .active-lofi-source .market-thumb {
+    width: 42px;
+    height: 42px;
+  }
+
+  .game-screen.is-arena .install-card .active-lofi-source small {
+    display: none;
+  }
+
+  .game-screen.is-arena .install-card .btn {
+    min-height: 34px;
+    padding: 7px 10px;
+    font-size: 12px;
+    box-shadow: 2px 2px 0 var(--shadow);
+  }
+
+  .game-screen.is-arena .action-dock {
+    left: 50%;
+    bottom: 16px;
+    width: min(620px, calc(100vw - 640px));
+    min-width: 480px;
+    grid-template-columns: minmax(0, 1fr) 82px;
+    gap: 10px;
+    padding: 8px;
+    background: rgba(3, 15, 28, 0.43);
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.22);
+    transform: translateX(-50%);
+  }
+
+  .game-screen.is-arena .arena-action-card p,
+  .game-screen.is-arena .arena-dock .summary,
+  .game-screen.is-arena .arena-dock small {
+    display: none;
+  }
+
+  .game-screen.is-arena .arena-dock .zone-action-card h3 {
+    margin-top: 4px;
+    font-size: 15px;
+  }
+
+  .game-screen.is-arena .arena-title-row strong {
+    padding: 3px 7px;
+    font-size: 12px;
+  }
+
+  .game-screen.is-arena .arena-scoreboard {
+    gap: 5px;
+    margin: 6px 0;
+  }
+
+  .game-screen.is-arena .arena-scoreboard div {
+    padding: 5px;
+  }
+
+  .game-screen.is-arena .arena-scoreboard span {
+    font-size: 8px;
+  }
+
+  .game-screen.is-arena .arena-scoreboard strong {
+    font-size: 12px;
+  }
+
+  .game-screen.is-arena .arena-meter-row {
+    grid-template-columns: 44px 1fr 34px;
+    gap: 6px;
+    margin: 6px 0 8px;
+  }
+
+  .game-screen.is-arena .button-row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .game-screen.is-arena .button-row .btn {
+    min-height: 34px;
+    padding: 7px 8px;
+    font-size: 12px;
+    box-shadow: 2px 2px 0 var(--shadow);
+  }
+
+  .game-screen.is-arena .button-row .btn svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .game-screen.is-arena .arena-dock .dpad {
+    gap: 6px;
+  }
+
+  .game-screen.is-arena .arena-dock .dpad .action-button {
+    justify-content: center;
+    min-height: 40px;
+    padding: 8px;
+  }
+
+  .game-screen.is-arena .arena-timeline {
+    display: none;
+  }
+
+  .game-screen.is-arena .game-chat-hud {
+    right: 16px;
+    bottom: 16px;
+    width: 300px;
+    max-height: 210px;
+    padding: 10px;
+    background: rgba(3, 15, 28, 0.4);
+    box-shadow: 2px 2px 0 rgba(0, 0, 0, 0.22);
+  }
+
+  .game-screen.is-arena .messenger-log {
+    max-height: 154px;
+    gap: 6px;
+    margin-top: 8px;
+  }
+
+  .game-screen.is-arena .messenger-entry {
+    padding: 8px;
+    border-width: 1px;
+  }
+
+  .game-screen.is-arena .messenger-entry:nth-child(n + 4),
+  .game-screen.is-arena .receipt-stack {
+    display: none;
+  }
+}
+
+@media (min-width: 721px) and (max-width: 1220px) {
+  .game-screen.is-arena .game-chat-hud {
+    display: none;
+  }
+
+  .game-screen.is-arena .action-dock {
+    left: calc(50% + 78px);
+    width: min(560px, calc(100vw - 430px));
+    min-width: 420px;
   }
 }
