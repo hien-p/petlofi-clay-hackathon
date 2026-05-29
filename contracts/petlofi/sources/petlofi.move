@@ -92,7 +92,8 @@ public entry fun create_template(
         walrus_asset_blob,
         animation_hash,
     };
-    transfer::public_transfer(template, sender);
+    // Shared so any connected wallet can mint a pet from this collection.
+    transfer::share_object(template);
 }
 
 public entry fun mint_pet(template: &mut PetTemplate, asset_blob: vector<u8>, ctx: &mut TxContext) {
