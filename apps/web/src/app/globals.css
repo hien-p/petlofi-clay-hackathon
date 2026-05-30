@@ -4183,6 +4183,21 @@ a {
   gap: 7px;
 }
 
+.care-collapse-btn {
+  margin-left: auto;
+}
+
+/* Collapsed Home dock: single column, narrower, no dpad */
+.action-dock.care-dock-collapsed {
+  grid-template-columns: 1fr;
+  width: min(440px, calc(100vw - 560px));
+  min-width: 360px;
+}
+
+.care-panel.care-collapsed {
+  gap: 8px;
+}
+
 .care-panel .care-header {
   display: flex;
   align-items: center;

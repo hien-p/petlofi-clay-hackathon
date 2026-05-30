@@ -394,6 +394,7 @@ export function PetRoom() {
   const [isDemoPlaying, setIsDemoPlaying] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [arenaExpanded, setArenaExpanded] = useState(false);
+  const [careCollapsed, setCareCollapsed] = useState(true);
   const [worldMode, setWorldMode] = useState<WorldMode>("village");
   const [gameCommand, setGameCommand] = useState<GameCommand>();
   const [gameCommandNonce, setGameCommandNonce] = useState(0);
@@ -2342,7 +2343,7 @@ export function PetRoom() {
           </div>
         )}
 
-        <div className={`action-dock ${worldMode === "arena" ? "arena-dock" : ""} ${worldMode === "arena" && !arenaExpanded ? "arena-dock-collapsed" : ""}`}>
+        <div className={`action-dock ${worldMode === "arena" ? "arena-dock" : ""} ${worldMode === "arena" && !arenaExpanded ? "arena-dock-collapsed" : ""} ${worldMode === "village" && careCollapsed ? "care-dock-collapsed" : ""}`}>
           {worldMode === "arena" ? (
             <div className="zone-action-card arena-action-card">
               <div className="arena-title-row">
@@ -2409,12 +2410,21 @@ export function PetRoom() {
               )}
             </div>
           ) : (
-            <div className="zone-action-card care-panel">
+            <div className={`zone-action-card care-panel ${careCollapsed ? "care-collapsed" : ""}`}>
               <div className="care-header">
                 <h3>Care for {petName}</h3>
                 <span className="pet-need-bubble">{petNeed.mood}</span>
+                <button
+                  className="arena-collapse-btn care-collapse-btn"
+                  type="button"
+                  onClick={() => setCareCollapsed((value) => !value)}
+                  title={careCollapsed ? "Show more" : "Minimize"}
+                  aria-expanded={!careCollapsed}
+                >
+                  {careCollapsed ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </button>
               </div>
-              <p className="next-hint">→ {petNeed.hint}</p>
+              {!careCollapsed && <p className="next-hint">→ {petNeed.hint}</p>}
               <div className="care-row">
                 <button
                   className="btn"
@@ -2446,21 +2456,25 @@ export function PetRoom() {
                   Play
                 </button>
               </div>
-              <label className="field-label compact-prompt">
-                AI task (optional)
-                <input value={prompt} onChange={(event) => setPrompt(event.target.value)} />
-              </label>
+              {!careCollapsed && (
+                <label className="field-label compact-prompt">
+                  AI task (optional)
+                  <input value={prompt} onChange={(event) => setPrompt(event.target.value)} />
+                </label>
+              )}
               <div className="care-row secondary">
-                <button
-                  className="btn secondary"
-                  type="button"
-                  onClick={() => void executeAgentRun()}
-                  disabled={isRunning}
-                  title="Run an AI agent task → earn XP + a Walrus proof"
-                >
-                  <Brain size={16} />
-                  Put to work
-                </button>
+                {!careCollapsed && (
+                  <button
+                    className="btn secondary"
+                    type="button"
+                    onClick={() => void executeAgentRun()}
+                    disabled={isRunning}
+                    title="Run an AI agent task → earn XP + a Walrus proof"
+                  >
+                    <Brain size={16} />
+                    Put to work
+                  </button>
+                )}
                 {isMinted ? (
                   <button
                     className="btn secondary"
@@ -2485,10 +2499,11 @@ export function PetRoom() {
                   </button>
                 )}
               </div>
-              {gameActionMessage && <p className="summary">{gameActionMessage}</p>}
+              {!careCollapsed && gameActionMessage && <p className="summary">{gameActionMessage}</p>}
             </div>
           )}
 
+          {(worldMode === "arena" || !careCollapsed) && (
           <div className="dpad" aria-label="Village movement controls">
             <button
               className="action-button dpad-up"
@@ -2547,6 +2562,7 @@ export function PetRoom() {
               <Navigation size={16} />
             </button>
           </div>
+          )}
         </div>
 
         <div className={`timeline-strip ${worldMode === "arena" ? "arena-timeline" : ""}`}>
