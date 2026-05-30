@@ -13,6 +13,7 @@ import {
   Download,
   Eye,
   EyeOff,
+  HelpCircle,
   Link as LinkIcon,
   Navigation,
   Sparkles,
@@ -20,6 +21,8 @@ import {
   X
 } from "lucide-react";
 import Link from "next/link";
+import { OnboardingOverlay } from "@/components/OnboardingOverlay";
+import { explorerObjectUrl, explorerTxUrl, faucetUrl } from "@/lib/explorer";
 import type { Transaction } from "@mysten/sui/transactions";
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -380,6 +383,10 @@ export function PetRoom() {
   const [activeVillageZoneId, setActiveVillageZoneId] = useState<VillageZoneId>("suins-gate");
   const [isPetdexOpen, setIsPetdexOpen] = useState(false);
   const [showHud, setShowHud] = useState(false);
+  const [lastTx, setLastTx] = useState<{ label: string; digest: string } | null>(null);
+  const [lastObject, setLastObject] = useState<string | null>(null);
+  const [isDemoPlaying, setIsDemoPlaying] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const [arenaExpanded, setArenaExpanded] = useState(false);
   const [worldMode, setWorldMode] = useState<WorldMode>("arena");
   const [gameCommand, setGameCommand] = useState<GameCommand>();
@@ -632,6 +639,49 @@ export function PetRoom() {
   function sendGameCommand(command: GameCommand) {
     setGameCommand(command);
     setGameCommandNonce((current) => current + 1);
+  }
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (!window.localStorage.getItem("petlofi_onboarded")) {
+      setShowOnboarding(true);
+    }
+  }, []);
+
+  async function runGuidedDemo() {
+    if (isDemoPlaying) {
+      return;
+    }
+    setIsDemoPlaying(true);
+    try {
+      pushMessengerMessage("Demo", "No wallet needed — here's your on-chain pet.");
+      setShowHud(true);
+      setWorldMode("village");
+      await wait(900);
+      sendGameCommand({ type: "setPetState", petState: "waving" });
+      await wait(800);
+      setWorldMode("village");
+      try {
+        await executeAgentRun();
+      } catch {
+        // off-chain demo run failed; keep the tour going
+      }
+      await wait(700);
+      setWorldMode("arena");
+      await wait(900);
+      sendGameCommand({ type: "startArenaRun" });
+      await wait(2200);
+      sendGameCommand({ type: "chargeAgentSpecial" });
+      await wait(500);
+      sendGameCommand({ type: "cuddle" });
+      await wait(1200);
+      pushMessengerMessage("Demo", "That pet, its stats, and proofs live on Sui. Connect a wallet to mint it for real.");
+      setGameActionMessage("Demo complete — connect your wallet to mint & play on-chain.");
+    } finally {
+      setIsDemoPlaying(false);
+    }
   }
 
   async function executeTx(tx: Transaction) {
@@ -1342,6 +1392,8 @@ export function PetRoom() {
       setPetName(payload.pet.displayName);
       setPetId(objectId);
       setIsMinted(true);
+      setLastTx({ label: "mint_pet", digest: mintResult.digest });
+      setLastObject(objectId);
       setMintMessage(
         `${payload.pet.displayName} minted on-chain to Sui ${network} (object ${shortObjectId(objectId)}). Asset blob ${payload.blobId} stored via ${payload.storage}.`
       );
@@ -1378,17 +1430,6 @@ export function PetRoom() {
   }
 
   async function executeAgentRun() {
-    if (!account?.address) {
-      setMintMessage("Connect your Sui wallet to mint / play on-chain.");
-      setPetState("waiting");
-      return;
-    }
-    if (!isMinted) {
-      setMintMessage("Mint the CLAY Lofi pet first.");
-      setPetState("waiting");
-      return;
-    }
-
     setIsRunning(true);
     setAgentResult(null);
     setMemoryMessage("");
@@ -1430,17 +1471,23 @@ export function PetRoom() {
         { label: "Proof URL", value: payload.walrus.proofUrl }
       ]);
 
-      try {
-        const recordResult = await executeTx(buildRecordActionTransaction(petId, 4, payload.walrus.blobId));
-        addProofEntries([
-          { label: "On-chain action", value: "record_agent_action(completed)" },
-          { label: "Record tx digest", value: recordResult.digest }
-        ]);
-        await refreshPetStats(petId);
-      } catch (recordError) {
-        const message = recordError instanceof Error ? recordError.message : "record_agent_action failed on-chain.";
-        setGameActionMessage(`Agent work succeeded but on-chain record_agent_action failed: ${message}`);
-        addProofEntries([{ label: "On-chain action error", value: message }]);
+      if (account?.address && isMinted) {
+        try {
+          const recordResult = await executeTx(buildRecordActionTransaction(petId, 4, payload.walrus.blobId));
+          setLastTx({ label: "record_agent_action", digest: recordResult.digest });
+          addProofEntries([
+            { label: "On-chain action", value: "record_agent_action(completed)" },
+            { label: "Record tx digest", value: recordResult.digest }
+          ]);
+          await refreshPetStats(petId);
+        } catch (recordError) {
+          const message = recordError instanceof Error ? recordError.message : "record_agent_action failed on-chain.";
+          setGameActionMessage(`Agent work succeeded but on-chain record_agent_action failed: ${message}`);
+          addProofEntries([{ label: "On-chain action error", value: message }]);
+        }
+      } else {
+        addProofEntries([{ label: "On-chain", value: "Connect wallet + mint to record this run on Sui" }]);
+        pushMessengerMessage("Demo", "AI work + Walrus proof are off-chain (no wallet needed). Connect a wallet to record it on Sui.");
       }
       if (worldMode === "arena" && arenaSnapshot.phase === "running") {
         sendGameCommand({ type: "chargeAgentSpecial" });
@@ -2082,6 +2129,15 @@ export function PetRoom() {
             <button
               className="hud-toggle"
               type="button"
+              onClick={() => setShowOnboarding(true)}
+              title="How it works / Watch demo"
+            >
+              <HelpCircle size={16} />
+              Demo
+            </button>
+            <button
+              className="hud-toggle"
+              type="button"
               onClick={() => setShowHud((value) => !value)}
               title={showHud ? "Hide panels" : "Show panels"}
               aria-pressed={showHud}
@@ -2091,9 +2147,38 @@ export function PetRoom() {
             </button>
             <span className="network-pill">Sui {process.env.NEXT_PUBLIC_SUI_NETWORK ?? "testnet"}</span>
             {!isOnChainConfigured() && <span className="mode-pill">Local proof</span>}
+            {!account?.address && (
+              <span className="mode-pill demo-pill">
+                Demo mode — no wallet ·{" "}
+                <a href={faucetUrl()} target="_blank" rel="noreferrer">
+                  Get testnet SUI ↗
+                </a>
+              </span>
+            )}
             <ConnectButton />
           </div>
         </header>
+
+        {lastTx && (
+          <div className="receipt-strip" role="status">
+            <span className="receipt-strip-badge">✅ On Sui testnet</span>
+            <strong>{lastTx.label}</strong>
+            <a href={explorerTxUrl(lastTx.digest)} target="_blank" rel="noreferrer">
+              View tx ↗
+            </a>
+            {lastObject && (
+              <a href={explorerObjectUrl(lastObject)} target="_blank" rel="noreferrer">
+                Pet object ↗
+              </a>
+            )}
+          </div>
+        )}
+
+        {isDemoPlaying && (
+          <div className="demo-playing-pill" role="status">
+            ▶ Playing demo (no wallet)
+          </div>
+        )}
 
         {showHud && (
         <aside className="hud-panel identity-hud game-online-hud">
@@ -2622,6 +2707,20 @@ export function PetRoom() {
             </div>
           </div>
         </div>
+      )}
+
+      {showOnboarding && (
+        <OnboardingOverlay
+          onWatchDemo={() => {
+            setShowOnboarding(false);
+            window.localStorage.setItem("petlofi_onboarded", "1");
+            void runGuidedDemo();
+          }}
+          onClose={() => {
+            setShowOnboarding(false);
+            window.localStorage.setItem("petlofi_onboarded", "1");
+          }}
+        />
       )}
     </main>
   );
