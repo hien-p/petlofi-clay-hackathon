@@ -453,7 +453,9 @@ export function PetRoom() {
   const progress = useMemo(() => Math.min(100, gameState.xp % 100), [gameState.xp]);
   const evolutionRequiredLevel = nextEvolutionRequiredLevel(gameState);
   const petNeed = !isMinted
-    ? { mood: "Mint me to begin!", hint: "Connect a wallet and mint to bring me on-chain." }
+    ? account?.address
+      ? { mood: "Mint me to begin!", hint: "Tap “Mint to begin” to bring me on-chain — then you can Feed & Rest me." }
+      : { mood: "Mint me to begin!", hint: "Connect a wallet, then tap “Mint to begin”." }
     : gameState.energy < 30
     ? { mood: "I'm exhausted 😴", hint: "Energy low — tap Rest." }
     : gameState.mood < 40
@@ -1738,7 +1740,7 @@ export function PetRoom() {
 
     if (action !== "move-left" && action !== "move-right" && !isMinted) {
       setPetState("waiting");
-      setGameActionMessage("Mint the pet first so only the owner can update game state.");
+      setGameActionMessage("🪙 Mint your pet first — then you can Feed & Rest it.");
       addProofEntries([
         { label: "Latest game action", value: `${action}_waiting_for_owner` },
         { label: "Latest animation state", value: "waiting" }
@@ -2565,30 +2567,28 @@ export function PetRoom() {
                   {careCollapsed ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                 </button>
               </div>
-              {!careCollapsed && <p className="next-hint">→ {petNeed.hint}</p>}
+              <p className="next-hint">→ {petNeed.hint}</p>
               <div className="care-row">
                 <button
-                  className="btn"
+                  className={`btn ${!isMinted ? "is-locked" : ""}`}
                   type="button"
                   onClick={() => {
-                    playSfx("feed");
+                    playSfx(isMinted ? "feed" : "click");
                     void runLocalGameAction("feed");
                   }}
-                  disabled={!isMinted}
-                  title="Feed: +mood +energy"
+                  title={isMinted ? "Feed: +mood +energy" : "Mint your pet first"}
                 >
                   <Cookie size={20} />
                   Feed
                 </button>
                 <button
-                  className="btn"
+                  className={`btn ${!isMinted ? "is-locked" : ""}`}
                   type="button"
                   onClick={() => {
-                    playSfx("rest");
+                    playSfx(isMinted ? "rest" : "click");
                     void runLocalGameAction("rest");
                   }}
-                  disabled={!isMinted}
-                  title="Rest: +energy"
+                  title={isMinted ? "Rest: +energy" : "Mint your pet first"}
                 >
                   <Moon size={20} />
                   Rest
@@ -2644,7 +2644,7 @@ export function PetRoom() {
                   </button>
                 ) : (
                   <button
-                    className="btn secondary"
+                    className="btn warn mint-cta"
                     type="button"
                     onClick={() => {
                       playSfx("click");
@@ -2654,11 +2654,11 @@ export function PetRoom() {
                     title="Mint your pet on Sui"
                   >
                     <Sparkles size={16} />
-                    Mint
+                    {isMinting ? "Minting…" : "Mint to begin"}
                   </button>
                 )}
               </div>
-              {!careCollapsed && gameActionMessage && <p className="summary">{gameActionMessage}</p>}
+              {gameActionMessage && <p className="summary">{gameActionMessage}</p>}
             </div>
           )}
 

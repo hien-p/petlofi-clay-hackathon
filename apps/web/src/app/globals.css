@@ -4398,6 +4398,20 @@ a {
   font-size: 13px;
 }
 
+.care-row .btn.is-locked {
+  opacity: 0.5;
+}
+
+.mint-cta {
+  width: 100%;
+  animation: mint-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes mint-pulse {
+  0%, 100% { box-shadow: 4px 4px 0 var(--shadow); }
+  50% { box-shadow: 4px 4px 0 var(--shadow), 0 0 16px rgba(244, 196, 48, 0.55); }
+}
+
 .care-row.secondary .btn {
   flex-direction: row;
   min-height: 32px;
