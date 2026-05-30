@@ -9,19 +9,13 @@ type OnboardingOverlayProps = {
   onClose: () => void;
 };
 
-const STEPS = [
-  {
-    title: "A pet that lives on-chain",
-    body: "Sui testnet — a real object with real stats you truly own."
-  },
-  {
-    title: "Put it to work",
-    body: "Run an AI agent task → it earns XP and a Walrus proof."
-  },
-  {
-    title: "Mint & play for real",
-    body: "Connect a wallet whenever you want to make it yours on-chain."
-  }
+const FLOW = [
+  { step: "1", icon: "🔗", action: "Connect wallet", result: "Link your Sui testnet wallet" },
+  { step: "2", icon: "✨", action: "Mint to begin", result: "Your pet becomes a real object on Sui — you own it" },
+  { step: "3", icon: "🍖", action: "Feed & Rest", result: "Keep Mood & Energy up (each is an on-chain action)" },
+  { step: "4", icon: "🎮", action: "Play arena", result: "Survive 60s → earn XP, proof auto-saved to Walrus" },
+  { step: "5", icon: "🤖", action: "Put to work", result: "Run an AI agent task → XP + a Walrus proof" },
+  { step: "6", icon: "⭐", action: "Evolve", result: "Level up enough → your pet grows a stage" }
 ];
 
 export function OnboardingOverlay({ onWatchDemo, onConnect, onClose }: OnboardingOverlayProps) {
@@ -48,19 +42,32 @@ export function OnboardingOverlay({ onWatchDemo, onConnect, onClose }: Onboardin
           <span className="onboarding-mark">
             <Sparkles size={20} />
           </span>
-          <h2>PetLofi — your AI work-pet, owned on Sui</h2>
+          <div>
+            <h2>PetLofi — raise your AI pet on Sui</h2>
+            <p className="onboarding-sub">An on-chain Tamagotchi: care for it, put it to work, evolve it. Here is the full loop:</p>
+          </div>
         </div>
-        <ol className="onboarding-steps">
-          {STEPS.map((step, index) => (
-            <li key={step.title}>
-              <span className="onboarding-step-num">{index + 1}</span>
-              <div>
-                <strong>{step.title}</strong>
-                <p>{step.body}</p>
-              </div>
-            </li>
-          ))}
-        </ol>
+        <table className="onboarding-flow">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Do this</th>
+              <th>What you get</th>
+            </tr>
+          </thead>
+          <tbody>
+            {FLOW.map((row) => (
+              <tr key={row.step}>
+                <td className="flow-step">{row.step}</td>
+                <td className="flow-action">
+                  <span className="flow-icon">{row.icon}</span>
+                  {row.action}
+                </td>
+                <td className="flow-result">{row.result}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
         <div className="onboarding-actions">
           <button ref={watchRef} className="onboarding-btn primary" type="button" onClick={onWatchDemo}>
             ▶ Watch demo (no wallet)

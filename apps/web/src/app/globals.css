@@ -3927,13 +3927,66 @@ a {
 
 .onboarding-card {
   position: relative;
-  width: min(480px, 100%);
+  width: min(620px, 100%);
   padding: 28px 26px 24px;
   background: var(--panel);
   border: 2px solid var(--mint);
   border-radius: 18px;
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
   color: #e8f6f0;
+}
+
+.onboarding-sub {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.onboarding-flow {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 16px 0 18px;
+  font-size: 13px;
+}
+
+.onboarding-flow th {
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom: 2px solid var(--line);
+}
+
+.onboarding-flow td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.onboarding-flow tr:last-child td {
+  border-bottom: none;
+}
+
+.onboarding-flow .flow-step {
+  width: 28px;
+  color: var(--gold);
+  font-weight: 700;
+}
+
+.onboarding-flow .flow-action {
+  white-space: nowrap;
+  font-weight: 700;
+  color: var(--mint);
+}
+
+.onboarding-flow .flow-icon {
+  margin-right: 6px;
+}
+
+.onboarding-flow .flow-result {
+  color: #d6ece4;
 }
 
 .onboarding-close {
