@@ -60,8 +60,8 @@ export type LofiAnimationVariant = {
 export function buildLofiAnimationVariant(item: TradeportLofiItem, index: number, animationPassFeeSui: string): LofiAnimationVariant {
   const seed = hashLofiVariantSeed(`${item.tokenId}:${item.name}:${index}`);
   const hue = seed % 360;
-  const tintHex = hslToHexNumber(hue, 58, 68);
-  const accentHex = hslToHexNumber((hue + 42) % 360, 72, 78);
+  const tintHex = hslToHexNumber(hue, 78, 58);
+  const accentHex = hslToHexNumber((hue + 42) % 360, 90, 64);
 
   return {
     id: `lofi-animation:${item.tokenId}`,

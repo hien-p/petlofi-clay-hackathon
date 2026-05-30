@@ -20,9 +20,12 @@ import {
   Link as LinkIcon,
   Moon,
   Navigation,
+  Palette,
   Sparkles,
   Star,
   Upload,
+  Volume2,
+  VolumeX,
   X,
   Zap
 } from "lucide-react";
@@ -73,6 +76,7 @@ import {
   type TradeportLofiItem,
   type TradeportLofiTopResponse
 } from "@/lib/lofiMarket";
+import { isSfxMuted, playSfx, setSfxMuted } from "@/lib/sfx";
 import type { PetState } from "@/lib/petPack";
 import {
   buildNameQuests,
@@ -194,6 +198,21 @@ const DEFAULT_GAME_STATE: PetGameState = {
   streak: 0,
   evolutionStage: 0
 };
+
+type AvatarPreset = { id: string; name: string; tintHex: number; accentHex: number };
+
+const AVATAR_PRESETS: AvatarPreset[] = [
+  { id: "mint", name: "Mint", tintHex: 0x6ee7b7, accentHex: 0x34d399 },
+  { id: "lava", name: "Lava", tintHex: 0xff6b3d, accentHex: 0xffd166 },
+  { id: "galaxy", name: "Galaxy", tintHex: 0x8b5cf6, accentHex: 0x22d3ee },
+  { id: "gold", name: "Gold", tintHex: 0xf4c430, accentHex: 0xffe9a8 },
+  { id: "shadow", name: "Shadow", tintHex: 0x475569, accentHex: 0x94a3b8 },
+  { id: "bubblegum", name: "Bubblegum", tintHex: 0xff7ac6, accentHex: 0xffc2e2 }
+];
+
+function hexNumberToCss(value: number): string {
+  return `#${value.toString(16).padStart(6, "0")}`;
+}
 
 const starterTimeline: TimelineEntry[] = [
   { petState: "idle", label: "Template ready", detail: "CLAY Lofi Yeti is home, owned by nobody yet, and ready to be minted." }
@@ -394,6 +413,10 @@ export function PetRoom() {
   const [lastObject, setLastObject] = useState<string | null>(null);
   const [isDemoPlaying, setIsDemoPlaying] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [sfxMuted, setSfxMutedState] = useState(false);
+  const [showVillageGuide, setShowVillageGuide] = useState(false);
+  const [activeAvatarPresetId, setActiveAvatarPresetId] = useState<string | null>(null);
+  const arenaSfxPhaseRef = useRef<string | null>(null);
   const [arenaExpanded, setArenaExpanded] = useState(false);
   const [careCollapsed, setCareCollapsed] = useState(true);
   const arenaAutoSavedRef = useRef(false);
@@ -488,6 +511,17 @@ export function PetRoom() {
     failed: "Failed",
     proof_saved: "Proof saved"
   };
+
+  useEffect(() => {
+    setSfxMutedState(isSfxMuted());
+    if (typeof window !== "undefined") {
+      try {
+        setShowVillageGuide(window.localStorage.getItem("petlofi_village_guide") !== "dismissed");
+      } catch {
+        setShowVillageGuide(true);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     if (!account?.address) {
@@ -643,6 +677,14 @@ export function PetRoom() {
 
   // Auto-save the run proof to Walrus when an arena run ends (no wallet needed).
   useEffect(() => {
+    if (arenaSfxPhaseRef.current !== arenaSnapshot.phase) {
+      arenaSfxPhaseRef.current = arenaSnapshot.phase;
+      if (arenaSnapshot.phase === "victory") {
+        playSfx("victory");
+      } else if (arenaSnapshot.phase === "failed") {
+        playSfx("fail");
+      }
+    }
     if (arenaSnapshot.phase === "running" || arenaSnapshot.phase === "idle") {
       arenaAutoSavedRef.current = false;
       return;
@@ -877,6 +919,12 @@ export function PetRoom() {
   }
 
   function handleSceneAction(action: string) {
+    if (action.includes("snack")) {
+      playSfx("pickup");
+    } else if (action.includes("cuddle") || action.includes("special")) {
+      playSfx("click");
+    }
+
     if (action === "arena_home_to_village") {
       setWorldMode("village");
       return;
@@ -1876,6 +1924,7 @@ export function PetRoom() {
   }
 
   function startArenaRun() {
+    playSfx("play");
     setWorldMode("arena");
     setArenaSummary(null);
     setArenaProofMessage("");
@@ -2152,6 +2201,38 @@ export function PetRoom() {
               <HelpCircle size={16} />
               Demo
             </button>
+            {worldMode === "village" && (
+              <button
+                className="hud-toggle"
+                type="button"
+                onClick={() => setShowVillageGuide(true)}
+                title="How to play"
+              >
+                <HelpCircle size={16} />
+                Guide
+              </button>
+            )}
+            <button
+              className="hud-toggle"
+              type="button"
+              onClick={() => {
+                const next = !sfxMuted;
+                setSfxMuted(next);
+                setSfxMutedState(next);
+                if (typeof window !== "undefined") {
+                  try {
+                    window.localStorage.setItem("petlofi_muted", next ? "1" : "0");
+                  } catch {
+                    // ignore storage failures
+                  }
+                }
+              }}
+              title={sfxMuted ? "Unmute sound effects" : "Mute sound effects"}
+              aria-pressed={sfxMuted}
+            >
+              {sfxMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+              {sfxMuted ? "Muted" : "Sound"}
+            </button>
             <button
               className="hud-toggle"
               type="button"
@@ -2177,6 +2258,21 @@ export function PetRoom() {
         </header>
 
         <div className="vitals-bar" aria-label="Pet vitals">
+          {(() => {
+            const rawAvatarUrl = activeLofiSource?.imageUrl ?? activeLofiVariant?.imageUrl ?? null;
+            const avatarUrl = rawAvatarUrl ? normalizeNftImageUrl(rawAvatarUrl) : null;
+            const dotColor = hexNumberToCss(activeGamePetVariant?.tintHex ?? 0x6ee7b7);
+            return (
+              <span className="vital-avatar" title={petName} aria-hidden="true">
+                {avatarUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={avatarUrl} alt="" referrerPolicy="no-referrer" />
+                ) : (
+                  <span className="vital-avatar-dot" style={{ background: dotColor }} />
+                )}
+              </span>
+            );
+          })()}
           <div className={`vital${gameState.mood < 35 ? " low" : ""}`} title="Mood">
             <Heart size={16} />
             <span className="meter mood"><i style={{ width: `${Math.min(100, gameState.mood)}%` }} /></span>
@@ -2195,6 +2291,36 @@ export function PetRoom() {
           </div>
           <span className="goal-chip">→ evolve at Lv {evolutionRequiredLevel}</span>
         </div>
+
+        {worldMode === "village" && showVillageGuide && (
+          <div className="village-guide" role="note" aria-label="How to raise your pet">
+            <div className="village-guide-head">
+              <strong>How to raise your pet</strong>
+              <button
+                className="village-guide-close"
+                type="button"
+                aria-label="Dismiss guide"
+                onClick={() => {
+                  setShowVillageGuide(false);
+                  if (typeof window !== "undefined") {
+                    try {
+                      window.localStorage.setItem("petlofi_village_guide", "dismissed");
+                    } catch {
+                      // ignore storage failures
+                    }
+                  }
+                }}
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <ul className="village-guide-list">
+              <li>🍖 Feed &amp; 😴 Rest keep Mood/Energy up.</li>
+              <li>🎮 Play earns XP — but tires your pet.</li>
+              <li>✨ Mint to own it on Sui, then Evolve as it levels.</li>
+            </ul>
+          </div>
+        )}
 
         {lastTx && (
           <div className="receipt-strip" role="status">
@@ -2444,7 +2570,10 @@ export function PetRoom() {
                 <button
                   className="btn"
                   type="button"
-                  onClick={() => void runLocalGameAction("feed")}
+                  onClick={() => {
+                    playSfx("feed");
+                    void runLocalGameAction("feed");
+                  }}
                   disabled={!isMinted}
                   title="Feed: +mood +energy"
                 >
@@ -2454,7 +2583,10 @@ export function PetRoom() {
                 <button
                   className="btn"
                   type="button"
-                  onClick={() => void runLocalGameAction("rest")}
+                  onClick={() => {
+                    playSfx("rest");
+                    void runLocalGameAction("rest");
+                  }}
                   disabled={!isMinted}
                   title="Rest: +energy"
                 >
@@ -2464,7 +2596,10 @@ export function PetRoom() {
                 <button
                   className="btn"
                   type="button"
-                  onClick={() => setWorldMode("arena")}
+                  onClick={() => {
+                    playSfx("play");
+                    setWorldMode("arena");
+                  }}
                   title="Play the arcade mini-game"
                 >
                   <Gamepad2 size={20} />
@@ -2482,7 +2617,10 @@ export function PetRoom() {
                   <button
                     className="btn secondary"
                     type="button"
-                    onClick={() => void executeAgentRun()}
+                    onClick={() => {
+                      playSfx("click");
+                      void executeAgentRun();
+                    }}
                     disabled={isRunning}
                     title="Run an AI agent task → earn XP + a Walrus proof"
                   >
@@ -2494,7 +2632,10 @@ export function PetRoom() {
                   <button
                     className="btn secondary"
                     type="button"
-                    onClick={() => void runLocalGameAction("evolve")}
+                    onClick={() => {
+                      playSfx("click");
+                      void runLocalGameAction("evolve");
+                    }}
                     disabled={!canEvolvePet(gameState)}
                     title={`Evolve at Lv ${evolutionRequiredLevel}`}
                   >
@@ -2505,7 +2646,10 @@ export function PetRoom() {
                   <button
                     className="btn secondary"
                     type="button"
-                    onClick={() => void mintLofiPet()}
+                    onClick={() => {
+                      playSfx("click");
+                      void mintLofiPet();
+                    }}
                     disabled={isMinting}
                     title="Mint your pet on Sui"
                   >
@@ -2695,6 +2839,45 @@ export function PetRoom() {
                   ? `${ownedLofiNfts.length} Lofi/Yeti-like NFT${ownedLofiNfts.length === 1 ? "" : "s"} matched from ${shortAddress(lastScannedAddress)}. Matching uses display name, description, image URL, and type until the official Lofi collection/package filters are configured.`
                   : "Local mode shows demo skins. Paste any Sui owner address or connect a wallet to list real Sui objects owned by that address."}
               </p>
+            </div>
+            <div className="petdex-section">
+              <h3>
+                <Palette size={16} /> Choose a look
+              </h3>
+              <p className="panel-copy petdex-dark-copy">
+                Pick a vivid preset to instantly re-skin your companion. Great for telling pets apart at a glance.
+              </p>
+              <div className="avatar-presets">
+                {AVATAR_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className={`avatar-swatch${activeAvatarPresetId === preset.id ? " active" : ""}`}
+                    onClick={() => {
+                      sendGameCommand({
+                        type: "setPetVariant",
+                        variant: {
+                          id: preset.id,
+                          name: preset.name,
+                          tintHex: preset.tintHex,
+                          accentHex: preset.accentHex
+                        }
+                      });
+                      setPetName(preset.name);
+                      setGameActionMessage(`${preset.name} look applied.`);
+                      setActiveAvatarPresetId(preset.id);
+                      playSfx("click");
+                    }}
+                    title={`${preset.name} look`}
+                  >
+                    <span className="avatar-swatch-colors">
+                      <span style={{ background: hexNumberToCss(preset.tintHex) }} />
+                      <span style={{ background: hexNumberToCss(preset.accentHex) }} />
+                    </span>
+                    <span className="avatar-swatch-name">{preset.name}</span>
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="petdex-section lofi-market-section">
               <div className="petdex-section-header">
