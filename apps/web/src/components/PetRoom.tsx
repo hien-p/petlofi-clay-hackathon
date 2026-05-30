@@ -10,15 +10,21 @@ import {
   ChevronDown,
   ChevronUp,
   Coins,
+  Cookie,
   Download,
   Eye,
   EyeOff,
+  Gamepad2,
+  Heart,
   HelpCircle,
   Link as LinkIcon,
+  Moon,
   Navigation,
   Sparkles,
+  Star,
   Upload,
-  X
+  X,
+  Zap
 } from "lucide-react";
 import Link from "next/link";
 import { OnboardingOverlay } from "@/components/OnboardingOverlay";
@@ -420,6 +426,15 @@ export function PetRoom() {
   const activeAnimationMeaning = ANIMATION_MEANINGS.find((meaning) => meaning.state === petState) ?? ANIMATION_MEANINGS[0];
   const progress = useMemo(() => Math.min(100, gameState.xp % 100), [gameState.xp]);
   const evolutionRequiredLevel = nextEvolutionRequiredLevel(gameState);
+  const petNeed = !isMinted
+    ? { mood: "Mint me to begin!", hint: "Connect a wallet and mint to bring me on-chain." }
+    : gameState.energy < 30
+    ? { mood: "I'm exhausted 😴", hint: "Energy low — tap Rest." }
+    : gameState.mood < 40
+    ? { mood: "I'm hungry 🍖", hint: "Mood low — tap Feed." }
+    : canEvolvePet(gameState)
+    ? { mood: "I'm ready to evolve! ✦", hint: "Tap Evolve to grow." }
+    : { mood: "Ready to work! ✦", hint: "Put me to work or go Play." };
   const nameQuests = useMemo(
     () =>
       buildNameQuests({
@@ -2097,32 +2112,17 @@ export function PetRoom() {
               <Sparkles size={22} />
             </div>
             <div>
-              <h1>PetLofi Village</h1>
-              <p>{activeIdentity}'s Sui-owned work companion</p>
+              <h1>PetLofi</h1>
+              <p>Raise your AI pet on Sui</p>
             </div>
             <div className="mode-switch" aria-label="World mode">
               <button className={worldMode === "arena" ? "active" : ""} type="button" onClick={() => setWorldMode("arena")}>
-                Arena
+                Play
               </button>
               <button className={worldMode === "village" ? "active" : ""} type="button" onClick={() => setWorldMode("village")}>
-                Village
+                Home
               </button>
             </div>
-          </div>
-
-          <div className="state-hotbar" aria-label="Animation hotbar">
-            {ANIMATION_MEANINGS.map((meaning, index) => (
-              <button
-                className={`hotbar-button ${petState === meaning.state ? "active" : ""}`}
-                type="button"
-                key={meaning.state}
-                onClick={() => previewAnimation(meaning)}
-                title={meaning.useCase}
-              >
-                <span>{index + 1}</span>
-                {meaning.state}
-              </button>
-            ))}
           </div>
 
           <div className="game-wallet">
@@ -2158,6 +2158,26 @@ export function PetRoom() {
             <ConnectButton />
           </div>
         </header>
+
+        <div className="vitals-bar" aria-label="Pet vitals">
+          <div className={`vital${gameState.mood < 35 ? " low" : ""}`} title="Mood">
+            <Heart size={16} />
+            <span className="meter mood"><i style={{ width: `${Math.min(100, gameState.mood)}%` }} /></span>
+            <strong>{gameState.mood}</strong>
+          </div>
+          <div className={`vital${gameState.energy < 30 ? " low" : ""}`} title="Energy">
+            <Zap size={16} />
+            <span className="meter energy"><i style={{ width: `${Math.min(100, gameState.energy)}%` }} /></span>
+            <strong>{gameState.energy}</strong>
+          </div>
+          <div className="vital xp" title="Level & XP">
+            <span className="lv">Lv {gameState.level} ·</span>
+            <Star size={16} />
+            <strong>{gameState.xp} XP</strong>
+            <span className="meter xp-meter"><i style={{ width: `${progress}%` }} /></span>
+          </div>
+          <span className="goal-chip">→ evolve at Lv {evolutionRequiredLevel}</span>
+        </div>
 
         {lastTx && (
           <div className="receipt-strip" role="status">
@@ -2287,7 +2307,7 @@ export function PetRoom() {
             <div className="zone-action-card arena-action-card">
               <div className="arena-title-row">
                 <span className="meaning-state">{arenaRunLabel[arenaSnapshot.phase]}</span>
-                <h3>Cuddle Arena</h3>
+                <h3>Play</h3>
                 <strong>{arenaSecondsLeft}s</strong>
                 <button
                   className="arena-collapse-btn"
@@ -2301,7 +2321,7 @@ export function PetRoom() {
               </div>
               {arenaExpanded && (
                 <>
-                  <p>Survive 60s, collect snacks, dodge enemies, and save the run as proof for this pet.</p>
+                  <p>Dodge enemies, grab snacks, survive 60s to boost your pet + earn an on-chain proof.</p>
                   <div className="arena-scoreboard">
                     <div><span>Score</span><strong>{arenaSnapshot.score}</strong></div>
                     <div><span>Snacks</span><strong>{arenaSnapshot.snacksCollected}</strong></div>
@@ -2349,35 +2369,83 @@ export function PetRoom() {
               )}
             </div>
           ) : (
-            <div className="zone-action-card">
-              <span className="meaning-state">{activeVillageZone.label}</span>
-              <h3>{activeVillageZone.title}</h3>
-              <p>{activeVillageZone.detail}</p>
-              <p className="animation-readout">
-                <strong>{activeAnimationMeaning.state}</strong>
-                {activeAnimationMeaning.useCase}
-              </p>
-              {activeVillageZone.id === "agent-forge" && (
-                <label className="field-label compact-prompt">
-                  AI agent task
-                  <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} />
-                </label>
-              )}
-              <div className="button-row">
-                <button className="btn" type="button" onClick={() => void interactWithVillageZone(activeVillageZone)} disabled={isRunning || isMinting}>
-                  <Sparkles size={16} />
-                  {activeVillageZone.action}
+            <div className="zone-action-card care-panel">
+              <div className="care-header">
+                <h3>Care for {petName}</h3>
+                <span className="pet-need-bubble">{petNeed.mood}</span>
+              </div>
+              <p className="next-hint">→ {petNeed.hint}</p>
+              <div className="care-row">
+                <button
+                  className="btn"
+                  type="button"
+                  onClick={() => void runLocalGameAction("feed")}
+                  disabled={!isMinted}
+                  title="Feed: +mood +energy"
+                >
+                  <Cookie size={20} />
+                  Feed
                 </button>
-                <button className="btn secondary" type="button" onClick={() => void runLocalGameAction("blocked")} disabled={!isMinted}>
-                  <AlertTriangle size={16} />
-                  Mark blocked
+                <button
+                  className="btn"
+                  type="button"
+                  onClick={() => void runLocalGameAction("rest")}
+                  disabled={!isMinted}
+                  title="Rest: +energy"
+                >
+                  <Moon size={20} />
+                  Rest
                 </button>
-                <button className="btn secondary" type="button" onClick={saveMemory} disabled={!agentResult}>
-                  <Brain size={16} />
-                  Save memory
+                <button
+                  className="btn"
+                  type="button"
+                  onClick={() => setWorldMode("arena")}
+                  title="Play the arcade mini-game"
+                >
+                  <Gamepad2 size={20} />
+                  Play
                 </button>
               </div>
-              {(gameActionMessage || mintMessage || memoryMessage) && <p className="summary">{gameActionMessage || mintMessage || memoryMessage}</p>}
+              <label className="field-label compact-prompt">
+                AI task (optional)
+                <input value={prompt} onChange={(event) => setPrompt(event.target.value)} />
+              </label>
+              <div className="care-row secondary">
+                <button
+                  className="btn secondary"
+                  type="button"
+                  onClick={() => void executeAgentRun()}
+                  disabled={isRunning}
+                  title="Run an AI agent task → earn XP + a Walrus proof"
+                >
+                  <Brain size={16} />
+                  Put to work
+                </button>
+                {isMinted ? (
+                  <button
+                    className="btn secondary"
+                    type="button"
+                    onClick={() => void runLocalGameAction("evolve")}
+                    disabled={!canEvolvePet(gameState)}
+                    title={`Evolve at Lv ${evolutionRequiredLevel}`}
+                  >
+                    <Sparkles size={16} />
+                    Evolve
+                  </button>
+                ) : (
+                  <button
+                    className="btn secondary"
+                    type="button"
+                    onClick={() => void mintLofiPet()}
+                    disabled={isMinting}
+                    title="Mint your pet on Sui"
+                  >
+                    <Sparkles size={16} />
+                    Mint
+                  </button>
+                )}
+              </div>
+              {gameActionMessage && <p className="summary">{gameActionMessage}</p>}
             </div>
           )}
 

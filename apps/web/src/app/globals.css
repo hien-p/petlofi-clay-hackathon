@@ -4066,3 +4066,208 @@ a {
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* ===== Vitals bar — the hero accent ===== */
+.vitals-bar {
+  position: absolute;
+  z-index: 11;
+  top: 96px;
+  left: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 16px;
+  width: auto;
+  max-width: calc(100% - 36px);
+  padding: 9px 16px;
+  pointer-events: auto;
+  background: linear-gradient(180deg, rgba(147, 245, 200, 0.12), rgba(23, 32, 38, 0.92));
+  border: 2px solid var(--mint);
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px rgba(147, 245, 200, 0.18), 4px 4px 0 var(--shadow);
+  font-family: var(--font-mono, monospace);
+}
+
+.vitals-bar .vital {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.vitals-bar .vital > svg {
+  color: var(--gold);
+  flex: none;
+}
+
+.vitals-bar .vital .meter {
+  display: inline-block;
+  width: 84px;
+  height: 9px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.vitals-bar .vital .meter > i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.25s ease;
+}
+
+.vitals-bar .vital .meter.mood > i {
+  background: var(--gold);
+}
+
+.vitals-bar .vital .meter.energy > i {
+  background: var(--mint);
+}
+
+.vitals-bar .vital strong {
+  min-width: 26px;
+  font-weight: 700;
+}
+
+.vitals-bar .vital.low > svg,
+.vitals-bar .vital.low strong {
+  color: #ff6b6b;
+}
+
+.vitals-bar .vital.low .meter > i {
+  background: #ff6b6b;
+}
+
+.vitals-bar .vital.xp {
+  gap: 6px;
+  color: var(--muted);
+}
+
+.vitals-bar .vital.xp .lv {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.vitals-bar .vital.xp > svg {
+  color: var(--gold);
+}
+
+.vitals-bar .vital.xp strong {
+  color: var(--ink);
+  min-width: 0;
+}
+
+.vitals-bar .vital.xp .meter.xp-meter {
+  width: 60px;
+  height: 5px;
+}
+
+.vitals-bar .vital.xp .meter.xp-meter > i {
+  background: var(--gold);
+}
+
+.vitals-bar .goal-chip {
+  margin-left: auto;
+  padding: 3px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+}
+
+/* ===== Care panel ===== */
+.zone-action-card.care-panel {
+  gap: 12px;
+}
+
+.care-panel .care-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.care-panel .care-header h3 {
+  margin: 0;
+}
+
+.pet-need-bubble {
+  position: relative;
+  display: inline-block;
+  padding: 5px 11px;
+  font-size: 12px;
+  color: var(--bg);
+  background: var(--gold);
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  font-weight: 700;
+}
+
+.pet-need-bubble::after {
+  content: "";
+  position: absolute;
+  left: 16px;
+  bottom: -8px;
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 8px solid var(--ink);
+}
+
+.next-hint {
+  margin: 0;
+  color: var(--gold);
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.care-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.care-row .btn {
+  flex: 1 1 0;
+  min-width: 92px;
+  min-height: 48px;
+  flex-direction: column;
+  gap: 4px;
+  font-weight: 700;
+}
+
+.care-row.secondary .btn {
+  flex-direction: row;
+  min-height: 38px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.care-panel .compact-prompt input {
+  width: 100%;
+  background: var(--panel-strong);
+  border: 2px solid var(--line);
+  color: var(--ink);
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-family: inherit;
+}
+
+@media (max-width: 1200px) {
+  .vitals-bar {
+    gap: 12px;
+    padding: 9px 12px;
+  }
+
+  .vitals-bar .vital .meter {
+    width: 64px;
+  }
+
+  .vitals-bar .goal-chip {
+    margin-left: 0;
+  }
+}
