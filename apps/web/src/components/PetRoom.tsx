@@ -394,7 +394,7 @@ export function PetRoom() {
   const [isDemoPlaying, setIsDemoPlaying] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [arenaExpanded, setArenaExpanded] = useState(false);
-  const [worldMode, setWorldMode] = useState<WorldMode>("arena");
+  const [worldMode, setWorldMode] = useState<WorldMode>("village");
   const [gameCommand, setGameCommand] = useState<GameCommand>();
   const [gameCommandNonce, setGameCommandNonce] = useState(0);
   const [mapFriends, setMapFriends] = useState<GameFriend[]>(STARTER_FRIENDS);
@@ -2300,6 +2300,46 @@ export function PetRoom() {
             Demo
           </Link>
         </div>
+        )}
+
+        {worldMode === "arena" &&
+          (arenaSnapshot.phase === "victory" || arenaSnapshot.phase === "failed" || arenaSnapshot.phase === "proof_saved") && (
+          <div className="arena-result" role="dialog" aria-label="Run result">
+            <div className="arena-result-card">
+              <span className="arena-result-emoji">
+                {arenaSnapshot.phase === "victory" ? "🏆" : arenaSnapshot.phase === "proof_saved" ? "✅" : "💥"}
+              </span>
+              <h3>
+                {arenaSnapshot.phase === "victory"
+                  ? "You survived 60s!"
+                  : arenaSnapshot.phase === "proof_saved"
+                  ? "Proof saved on Sui"
+                  : "Your pet was overwhelmed!"}
+              </h3>
+              <div className="arena-result-stats">
+                <div><span>Score</span><strong>{arenaSummary?.score ?? arenaSnapshot.score}</strong></div>
+                <div><span>Cleared</span><strong>{arenaSummary?.enemiesCleared ?? arenaSnapshot.enemiesCleared}</strong></div>
+                <div><span>Snacks</span><strong>{arenaSummary?.snacksCollected ?? arenaSnapshot.snacksCollected}</strong></div>
+              </div>
+              <p className="arena-result-hint">Playing tired your pet out — head Home and Rest to recover energy.</p>
+              <div className="arena-result-actions">
+                <button className="btn" type="button" onClick={startArenaRun}>
+                  <Sparkles size={16} />
+                  Play again
+                </button>
+                {arenaSnapshot.phase !== "proof_saved" && (
+                  <button className="btn warn" type="button" onClick={() => void saveArenaProof()} disabled={!arenaSummary || isSavingArenaProof}>
+                    <Upload size={16} />
+                    Save proof on Sui
+                  </button>
+                )}
+                <button className="btn secondary" type="button" onClick={() => setWorldMode("village")}>
+                  <Moon size={16} />
+                  Home &amp; rest
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         <div className={`action-dock ${worldMode === "arena" ? "arena-dock" : ""} ${worldMode === "arena" && !arenaExpanded ? "arena-dock-collapsed" : ""}`}>
