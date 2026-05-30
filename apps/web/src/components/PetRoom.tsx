@@ -66,6 +66,7 @@ import {
 import {
   DEFAULT_ANIMATION_MINT_FEE_SUI,
   LOFI_TRADEPORT_URL,
+  buildLofiAnimationVariant,
   buildUniqueLofiAnimationVariants,
   shortObjectId,
   type LofiAnimationVariant,
@@ -1171,25 +1172,22 @@ export function PetRoom() {
       return;
     }
 
-    setPetState("waiting");
-    setSingleTimeline({
-      petState: "waiting",
-      label: "Animation pass required",
-      detail: `${item.name} belongs to another owner. Mint the ${animationMintFeeSui} SUI animation pass before generating a Codex-compatible 8x9 atlas.`
-    });
-    setGameActionMessage(`${item.name} queued as an external Lofi candidate. Required mint pass: ${animationMintFeeSui} SUI before animation generation.`);
-    addProofEntries([
-      { label: "Animation pass candidate", value: item.name },
-      { label: "Candidate token", value: shortObjectId(item.tokenId) },
-      { label: "External Lofi owner", value: shortObjectId(item.owner) },
-      { label: "Animation mint fee", value: `${animationMintFeeSui} SUI` },
-      { label: "Latest game action", value: "mint_animation_pass_required" },
-      { label: "Latest animation state", value: "waiting" }
-    ]);
-    pushMessengerMessage(
-      "Petdex Market",
-      `${item.name} is external; mint an animation pass (${animationMintFeeSui} SUI) to generate and store its PetLofi pack.`
+    // Not owned and no pre-generated pack: let the player "try on" the look as a
+    // cosmetic preview skin. Clearly flagged as not owned on-chain.
+    const previewVariant = buildLofiAnimationVariant(
+      item,
+      Math.max(0, selectedMarketItems.findIndex((candidate) => candidate.tokenId === item.tokenId)),
+      animationMintFeeSui
     );
+    equipLofiAnimationVariant(previewVariant, item);
+    setGameActionMessage(`Previewing ${item.name} as a skin — you don't own this NFT, so it's cosmetic only.`);
+    addProofEntries([
+      { label: "Preview skin", value: item.name },
+      { label: "Skin token", value: shortObjectId(item.tokenId) },
+      { label: "Owned by", value: shortObjectId(item.owner) },
+      { label: "Latest game action", value: "preview_lofi_skin" }
+    ]);
+    pushMessengerMessage("Petdex", `${activeIdentity} is previewing ${item.name} as a cosmetic skin (not owned).`);
   }
 
   function equipGeneratedLofiPack(pack: LofiGeneratedPetPack, sourceItem?: TradeportLofiItem) {
@@ -2795,7 +2793,7 @@ export function PetRoom() {
                       <MarketLofiThumb imageUrl={item.imageUrl} variant={variant} pack={pack} />
                       <strong>{item.name}</strong>
                       <span className={`pack-status ${packStatusClass(pack, variant)}`}>
-                        {pack ? generatedPackLabel(pack) : variant ? "Shared preview" : "Queued"}
+                        {isOwnedByCurrentWallet ? "Owned ✓" : "Preview skin"}
                       </span>
                       <span className="market-line">
                         <b>Rank</b>
@@ -2810,19 +2808,9 @@ export function PetRoom() {
                         {shortObjectId(item.owner)}
                       </span>
                       <small>
-                        {pack && isRealGeneratedPack(pack)
-                          ? pack.generationMode === "hatch-refined"
-                            ? "Refined 8x9 atlas ready: click to equip"
-                            : "Real 8x9 atlas ready: click to equip"
-                          : pack?.status === "preview"
-                            ? "Fallback preview only: click to preview"
-                          : pack?.status === "queued"
-                            ? "Queued: click to preview while offline generation is pending"
-                            : variant
-                              ? "Shared preview rig: click to preview"
-                              : isOwnedByCurrentWallet
-                                ? "Owned by wallet: equip/generate"
-                                : `${animationMintFeeSui} SUI pass to animate`}
+                        {isOwnedByCurrentWallet
+                          ? "You own this — click to equip"
+                          : "Click to try as a preview skin"}
                       </small>
                     </button>
                   );
