@@ -395,6 +395,7 @@ export function PetRoom() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [arenaExpanded, setArenaExpanded] = useState(false);
   const [careCollapsed, setCareCollapsed] = useState(true);
+  const arenaAutoSavedRef = useRef(false);
   const [worldMode, setWorldMode] = useState<WorldMode>("village");
   const [gameCommand, setGameCommand] = useState<GameCommand>();
   const [gameCommandNonce, setGameCommandNonce] = useState(0);
@@ -638,6 +639,23 @@ export function PetRoom() {
 
     void loadTradeportTopLofi(false);
   }, [isPetdexOpen, lofiMarket, isLoadingMarket]);
+
+  // Auto-save the run proof to Walrus when an arena run ends (no wallet needed).
+  useEffect(() => {
+    if (arenaSnapshot.phase === "running" || arenaSnapshot.phase === "idle") {
+      arenaAutoSavedRef.current = false;
+      return;
+    }
+    if (
+      (arenaSnapshot.phase === "victory" || arenaSnapshot.phase === "failed") &&
+      arenaSummary &&
+      !isSavingArenaProof &&
+      !arenaAutoSavedRef.current
+    ) {
+      arenaAutoSavedRef.current = true;
+      void saveArenaProof();
+    }
+  }, [arenaSnapshot.phase, arenaSummary, isSavingArenaProof]);
 
   const addProofEntries = (entries: ProofEntry[]) => {
     setProofs((current) => mergeProofEntries(current, entries));
@@ -2308,13 +2326,11 @@ export function PetRoom() {
           <div className="arena-result" role="dialog" aria-label="Run result">
             <div className="arena-result-card">
               <span className="arena-result-emoji">
-                {arenaSnapshot.phase === "victory" ? "🏆" : arenaSnapshot.phase === "proof_saved" ? "✅" : "💥"}
+                {(arenaSummary?.outcome ?? "failed") === "victory" ? "🏆" : "💥"}
               </span>
               <h3>
-                {arenaSnapshot.phase === "victory"
+                {(arenaSummary?.outcome ?? "failed") === "victory"
                   ? "You survived 60s!"
-                  : arenaSnapshot.phase === "proof_saved"
-                  ? "Proof saved on Sui"
                   : "Your pet was overwhelmed!"}
               </h3>
               <div className="arena-result-stats">
@@ -2322,18 +2338,19 @@ export function PetRoom() {
                 <div><span>Cleared</span><strong>{arenaSummary?.enemiesCleared ?? arenaSnapshot.enemiesCleared}</strong></div>
                 <div><span>Snacks</span><strong>{arenaSummary?.snacksCollected ?? arenaSnapshot.snacksCollected}</strong></div>
               </div>
+              <p className="arena-result-proof">
+                {isSavingArenaProof
+                  ? "Saving run proof to Walrus…"
+                  : arenaSnapshot.phase === "proof_saved"
+                  ? `✓ Run proof saved to Walrus${latestWalrusBlob ? ` · ${latestWalrusBlob.slice(0, 14)}…` : ""}`
+                  : "Securing run proof…"}
+              </p>
               <p className="arena-result-hint">Playing tired your pet out — head Home and Rest to recover energy.</p>
               <div className="arena-result-actions">
                 <button className="btn" type="button" onClick={startArenaRun}>
                   <Sparkles size={16} />
                   Play again
                 </button>
-                {arenaSnapshot.phase !== "proof_saved" && (
-                  <button className="btn warn" type="button" onClick={() => void saveArenaProof()} disabled={!arenaSummary || isSavingArenaProof}>
-                    <Upload size={16} />
-                    Save proof on Sui
-                  </button>
-                )}
                 <button className="btn secondary" type="button" onClick={() => setWorldMode("village")}>
                   <Moon size={16} />
                   Home &amp; rest

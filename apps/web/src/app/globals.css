@@ -4353,6 +4353,13 @@ a {
   color: var(--gold);
 }
 
+.arena-result-proof {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--mint);
+}
+
 .arena-result-hint {
   margin: 0 0 14px;
   font-size: 12px;
